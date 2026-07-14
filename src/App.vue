@@ -63,25 +63,7 @@ const quickLinks = [
 
 const posts = ref([]);
 
-const carCards = ref([
-  { name: "GR86 / BRZ", heat: "轻量化改装热度 98", tag: "入门后驱", img: assets.exhaust },
-  { name: "A90 Supra", heat: "动力升级热度 96", tag: "性能旗舰", img: assets.supra },
-  { name: "WRX STI", heat: "拉力风格热度 91", tag: "四驱平台", img: assets.wrx },
-  { name: "R32 GT-R", heat: "JDM 经典热度 99", tag: "经典项目车", img: assets.engine },
-  { name: "BMW M2", heat: "短轴后驱热度 95", tag: "M 系入门性能", img: assets.supra },
-  { name: "BMW M3", heat: "四门性能热度 98", tag: "M 系标杆", img: assets.engine },
-  { name: "BMW M4", heat: "双门赛道热度 97", tag: "M 系轿跑", img: assets.exhaust },
-  { name: "BMW M5", heat: "高性能行政热度 92", tag: "M 系旗舰", img: assets.shop },
-  { name: "Mercedes-AMG A 45", heat: "钢炮改装热度 94", tag: "AMG 钢炮", img: assets.wrx },
-  { name: "Mercedes-AMG C 63", heat: "C 级性能热度 93", tag: "AMG 中坚", img: assets.supra },
-  { name: "Mercedes-AMG GT", heat: "GT 跑车热度 96", tag: "AMG 跑车", img: assets.exhaust },
-  { name: "Audi S3", heat: "四驱钢炮热度 93", tag: "S 系入门", img: assets.wrx },
-  { name: "Audi S4", heat: "旅行/轿车热度 90", tag: "S 系性能", img: assets.shop },
-  { name: "Audi RS 3", heat: "五缸钢炮热度 98", tag: "RS 钢炮", img: assets.engine },
-  { name: "Audi RS 5", heat: "双门四驱热度 94", tag: "RS 轿跑", img: assets.supra },
-  { name: "Audi RS 6 Avant", heat: "性能旅行热度 99", tag: "RS 旅行车", img: assets.exhaust },
-  { name: "Audi RS e-tron GT", heat: "纯电性能热度 91", tag: "RS 纯电", img: assets.shop },
-]);
+const carCards = ref([]);
 
 const carImageThemes = {
   BMW: assets.bmwM,
@@ -108,25 +90,7 @@ function useFallbackImage(event) {
   }
 }
 
-const carTrims = ref([
-  { name: "2.4L 手动基础版", car: "GR86 / BRZ", engine: "2.4L H4 自然吸气", horsepower: "234 马力", drivetrain: "前置后驱", gearbox: "6MT", acceleration: "6.5 秒", featured: true },
-  { name: "3.0T 标准型", car: "A90 Supra", engine: "3.0T 直列六缸", horsepower: "387 马力", drivetrain: "前置后驱", gearbox: "8AT", acceleration: "4.1 秒", featured: true },
-  { name: "2.5T 手动四驱", car: "WRX STI", engine: "2.5T H4 涡轮增压", horsepower: "300 马力", drivetrain: "全时四驱", gearbox: "6MT", acceleration: "5.2 秒", featured: true },
-  { name: "M2 Coupe", car: "BMW M2", engine: "3.0T 直列六缸双涡轮", horsepower: "460 马力", drivetrain: "前置后驱", gearbox: "8AT", acceleration: "4.1 秒", featured: true },
-  { name: "M3 Competition", car: "BMW M3", engine: "3.0T 直列六缸双涡轮", horsepower: "510 马力", drivetrain: "前置后驱", gearbox: "8AT", acceleration: "3.9 秒", featured: true },
-  { name: "M3 xDrive", car: "BMW M3", engine: "3.0T 直列六缸双涡轮", horsepower: "510 马力", drivetrain: "全时四驱", gearbox: "8AT", acceleration: "3.5 秒", featured: false },
-  { name: "M4 Coupe", car: "BMW M4", engine: "3.0T 直列六缸双涡轮", horsepower: "510 马力", drivetrain: "前置后驱", gearbox: "8AT", acceleration: "3.9 秒", featured: true },
-  { name: "M5 Competition", car: "BMW M5", engine: "4.4T V8 双涡轮", horsepower: "625 马力", drivetrain: "全时四驱", gearbox: "8AT", acceleration: "3.3 秒", featured: true },
-  { name: "A 45 S 4MATIC+", car: "Mercedes-AMG A 45", engine: "2.0T 直列四缸涡轮", horsepower: "421 马力", drivetrain: "全时四驱", gearbox: "8DCT", acceleration: "3.9 秒", featured: true },
-  { name: "C 63 S E Performance", car: "Mercedes-AMG C 63", engine: "2.0T 插混", horsepower: "680 马力", drivetrain: "全时四驱", gearbox: "9AT", acceleration: "3.4 秒", fuel: "插电混动", featured: true },
-  { name: "AMG GT 53", car: "Mercedes-AMG GT", engine: "3.0T 直列六缸", horsepower: "435 马力", drivetrain: "全时四驱", gearbox: "9AT", acceleration: "4.5 秒", featured: true },
-  { name: "S3 Limousine", car: "Audi S3", engine: "2.0T 直列四缸", horsepower: "290 马力", drivetrain: "全时四驱", gearbox: "7DCT", acceleration: "4.8 秒", featured: true },
-  { name: "S4 Sedan", car: "Audi S4", engine: "3.0T V6", horsepower: "354 马力", drivetrain: "全时四驱", gearbox: "8AT", acceleration: "4.7 秒", featured: true },
-  { name: "RS 3 Limousine", car: "Audi RS 3", engine: "2.5T 直列五缸", horsepower: "400 马力", drivetrain: "全时四驱", gearbox: "7DCT", acceleration: "3.8 秒", featured: true },
-  { name: "RS 5 Coupe", car: "Audi RS 5", engine: "2.9T V6 双涡轮", horsepower: "450 马力", drivetrain: "全时四驱", gearbox: "8AT", acceleration: "3.9 秒", featured: true },
-  { name: "RS 6 Avant", car: "Audi RS 6 Avant", engine: "4.0T V8 双涡轮", horsepower: "600 马力", drivetrain: "全时四驱", gearbox: "8AT", acceleration: "3.6 秒", featured: true },
-  { name: "RS e-tron GT", car: "Audi RS e-tron GT", engine: "前后双电机", horsepower: "646 马力", drivetrain: "全时四驱", gearbox: "2AT", acceleration: "3.3 秒", fuel: "纯电", featured: true },
-]);
+const carTrims = ref([]);
 
 const buyingGuides = ref([]);
 const clubs = ref([]);
@@ -491,8 +455,8 @@ const routeDetail = computed(() => {
 
 function apiBase() {
   const host = window.location.hostname;
-  const apiHost = host === "localhost" || host === "127.0.0.1" ? "127.0.0.1" : host;
-  return `http://${apiHost}:8000`;
+  if (host === "localhost" || host === "127.0.0.1") return "http://127.0.0.1:8000";
+  return "";
 }
 
 function mediaUrl(value) {
