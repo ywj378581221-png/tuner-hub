@@ -1339,8 +1339,10 @@ button {
 }
 
 .car-card img {
-  height: 120px;
+  height: auto;
+  aspect-ratio: 16 / 9;
   border-radius: 5px;
+  object-position: center;
 }
 
 .car-card h2 {
