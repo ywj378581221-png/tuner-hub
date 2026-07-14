@@ -43,6 +43,7 @@ const assets = {
 };
 
 const defaultAvatar = "https://i.pravatar.cc/120?img=12";
+const fallbackImage = assetPath("car-jdm.jpg");
 const navItems = ["首页", "选车", "评测", "车友圈", "配件专区", "排行榜"];
 const navIcons = [House, Compass, Gauge, ChatCircle, Wrench, Star];
 const routePaths = ["/", "/cars", "/reviews", "/community", "/market", "/rankings"];
@@ -99,6 +100,12 @@ function carDisplayImage(car) {
   if (car.name?.startsWith("Audi")) return carImageThemes.Audi;
   if (["GR86 / BRZ", "WRX STI", "R32 GT-R", "A90 Supra"].includes(car.name)) return car.img || carImageThemes.JDM;
   return car.img || assets.hero;
+}
+
+function useFallbackImage(event) {
+  if (event?.target && event.target.src !== fallbackImage) {
+    event.target.src = fallbackImage;
+  }
 }
 
 const carTrims = ref([
@@ -897,7 +904,7 @@ async function publishPost() {
                   </div>
                 </div>
                 <button class="mini-card" @click="goTo(carRoute(routeCar))">
-                  <img :src="carDisplayImage(routeCar)" alt="" />
+                  <img :src="carDisplayImage(routeCar)" alt="" @error="useFallbackImage" />
                   <strong>{{ routeCar.name }}</strong>
                   <span>车型主页</span>
                 </button>
@@ -909,7 +916,7 @@ async function publishPost() {
           <section v-else class="car-detail-page">
             <button class="back-link" @click="router.back()">返回上一页</button>
             <article class="car-hero-card">
-              <img :src="carDisplayImage(routeCar)" :alt="routeCar.name" />
+              <img :src="carDisplayImage(routeCar)" :alt="routeCar.name" @error="useFallbackImage" />
               <div>
                 <span>{{ routeCar.tag }}</span>
                 <h1>{{ routeCar.name }}</h1>
@@ -1155,7 +1162,7 @@ async function publishPost() {
 
           <section class="car-grid">
             <article v-for="car in filteredCars" :key="car.name" class="car-card" role="button" tabindex="0" @click="goTo(carRoute(car))">
-                <img :src="car.displayImg" :alt="car.name" />
+                <img :src="car.displayImg" :alt="car.name" @error="useFallbackImage" />
                 <div>
                   <span>{{ car.tag }}</span>
                   <h2>{{ car.name }}</h2>
@@ -1250,7 +1257,7 @@ async function publishPost() {
           </section>
           <section class="car-grid">
             <article v-for="item in market" :key="item.name" class="car-card" role="button" tabindex="0" @click="goTo(pathFor('market', item.name))">
-              <img :src="item.img" :alt="item.name" />
+              <img :src="item.img" :alt="item.name" @error="useFallbackImage" />
               <div>
                 <span>{{ item.status || '配件动态' }}</span>
                 <h2>{{ item.name }}</h2>
@@ -1345,7 +1352,7 @@ async function publishPost() {
         <section class="panel">
           <div class="panel-head"><h2>附近聚会</h2><button @click="goTo('/community')">全部</button></div>
           <button v-for="event in events" :key="event.name" class="event-row" @click="goTo(pathFor('events', event.name))">
-            <img :src="event.img" alt="" /><div><strong>{{ event.name }}</strong><small><CalendarBlank :size="13" /> {{ event.meta }}</small><span>{{ event.count }}</span></div>
+            <img :src="event.img" alt="" @error="useFallbackImage" /><div><strong>{{ event.name }}</strong><small><CalendarBlank :size="13" /> {{ event.meta }}</small><span>{{ event.count }}</span></div>
           </button>
           <p v-if="!events.length" class="empty-note">暂无聚会活动。</p>
         </section>
@@ -1353,7 +1360,7 @@ async function publishPost() {
         <section class="panel">
           <div class="panel-head"><h2>车友热议配件</h2><button @click="goTo('/community')">全部</button></div>
           <button v-for="item in market" :key="item.name" class="product-row" @click="goTo(pathFor('market', item.name))">
-            <img :src="item.img" alt="" /><div><strong>{{ item.name }}</strong><span>{{ item.status || '配件动态' }}</span></div>
+            <img :src="item.img" alt="" @error="useFallbackImage" /><div><strong>{{ item.name }}</strong><span>{{ item.status || '配件动态' }}</span></div>
           </button>
           <p v-if="!market.length" class="empty-note">暂无配件内容。</p>
         </section>
