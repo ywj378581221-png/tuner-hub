@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import path, re_path
-from community.views import change_password, confirm_password_reset, create_garage_vehicle, create_post, create_project_record, current_user, delete_post, login_user, logout_user, private_messages, register_user, request_password_reset, send_private_message, site_data, toggle_follow_user, update_profile, upload_avatar
+from community.views import change_password, confirm_password_reset, create_garage_vehicle, create_post, create_project_record, current_user, delete_post, login_user, logout_user, private_messages, register_user, request_password_reset, send_private_message, site_data, toggle_follow_user, update_email, update_profile, upload_avatar
 from tunerhub.views import frontend_app
 
 urlpatterns = [
@@ -28,6 +28,7 @@ urlpatterns = [
     path('api/auth/login/', login_user, name='login-user'),
     path('api/auth/logout/', logout_user, name='logout-user'),
     path('api/auth/profile/', update_profile, name='update-profile'),
+    path('api/auth/email/', update_email, name='update-email'),
     path('api/auth/password/', change_password, name='change-password'),
     path('api/auth/password-reset/request/', request_password_reset, name='request-password-reset'),
     path('api/auth/password-reset/confirm/', confirm_password_reset, name='confirm-password-reset'),

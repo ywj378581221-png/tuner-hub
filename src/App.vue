@@ -120,6 +120,8 @@ const resetForm = ref({ email: "", uid: "", token: "", new_password: "", confirm
 const currentUser = ref(null);
 const nicknameDraft = ref("");
 const nicknameSaving = ref(false);
+const emailForm = ref({ email: "", current_password: "" });
+const emailSaving = ref(false);
 const passwordForm = ref({ current_password: "", new_password: "", confirm_password: "" });
 const passwordSaving = ref(false);
 const userCards = ref([]);
@@ -172,6 +174,7 @@ const authTitle = computed(() => ({
 function applyCurrentUser(user) {
   currentUser.value = user;
   nicknameDraft.value = user?.nickname || "";
+  emailForm.value = { email: user?.email || "", current_password: "" };
 }
 
 const enrichedCars = computed(() => carCards.value.map((car) => {
@@ -710,6 +713,23 @@ async function saveNickname() {
   }
 }
 
+async function saveEmail() {
+  if (!currentUser.value || emailSaving.value) return;
+  emailSaving.value = true;
+  try {
+    const data = await apiFetch("/api/auth/email/", {
+      method: "POST",
+      body: JSON.stringify(emailForm.value),
+    });
+    applyCurrentUser(data.user);
+    showToast("找回邮箱已更新");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    emailSaving.value = false;
+  }
+}
+
 async function savePassword() {
   if (!currentUser.value || passwordSaving.value) return;
   if (passwordForm.value.new_password !== passwordForm.value.confirm_password) {
@@ -1064,6 +1084,17 @@ async function publishPost() {
                   <button type="submit" :disabled="nicknameSaving || !nicknameDraft.trim()">
                     <CheckCircle :size="18" />
                     {{ nicknameSaving ? '保存中' : '保存昵称' }}
+                  </button>
+                </div>
+              </form>
+              <form v-if="currentUser" class="settings-form" @submit.prevent="saveEmail">
+                <label for="profile-email">找回邮箱</label>
+                <div class="email-fields">
+                  <input id="profile-email" v-model="emailForm.email" type="email" autocomplete="email" placeholder="邮箱地址" />
+                  <input v-model="emailForm.current_password" type="password" autocomplete="current-password" placeholder="当前密码" />
+                  <button type="submit" :disabled="emailSaving || !emailForm.email || !emailForm.current_password">
+                    <CheckCircle :size="18" />
+                    {{ emailSaving ? '保存中' : '保存邮箱' }}
                   </button>
                 </div>
               </form>

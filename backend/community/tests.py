@@ -159,6 +159,25 @@ class PasswordResetTests(TestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn("https://tunerhub.test/reset-password/", mail.outbox[0].body)
 
+    def test_request_includes_each_legacy_account_using_the_same_email(self):
+        get_user_model().objects.create_user(
+            username="second_owner",
+            email="owner@example.com",
+            password="SecondPass2026!",
+        )
+
+        response = self.client.post(
+            "/api/auth/password-reset/request/",
+            data=json.dumps({"email": "owner@example.com"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("账号：reset_owner", mail.outbox[0].body)
+        self.assertIn("账号：second_owner", mail.outbox[0].body)
+        self.assertEqual(mail.outbox[0].body.count("/reset-password/"), 2)
+
     def test_request_does_not_reveal_unknown_email(self):
         response = self.client.post(
             "/api/auth/password-reset/request/",
@@ -206,5 +225,113 @@ class PasswordResetTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(reused_response.status_code, 400)
+
+
+class RegistrationEmailTests(TestCase):
+    def test_requires_email(self):
+        response = self.client.post(
+            "/api/auth/register/",
+            data=json.dumps({
+                "username": "new_owner",
+                "nickname": "新车主",
+                "password": "SecureRegister2026!",
+                "email": "",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_rejects_invalid_email(self):
+        response = self.client.post(
+            "/api/auth/register/",
+            data=json.dumps({
+                "username": "new_owner",
+                "nickname": "新车主",
+                "password": "SecureRegister2026!",
+                "email": "not-an-email",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "请输入有效的邮箱地址")
+
+    def test_rejects_email_already_in_use(self):
+        get_user_model().objects.create_user(
+            username="existing_owner",
+            email="owner@example.com",
+            password="ExistingPass2026!",
+        )
+
+        response = self.client.post(
+            "/api/auth/register/",
+            data=json.dumps({
+                "username": "new_owner",
+                "nickname": "新车主",
+                "password": "SecureRegister2026!",
+                "email": "OWNER@example.com",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"], "该邮箱已绑定其他账号")
+
+
+class UpdateEmailTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="email_owner",
+            email="old@example.com",
+            password="CurrentPass2026!",
+        )
+
+    def test_requires_current_password(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            "/api/auth/email/",
+            data=json.dumps({"email": "new@example.com", "current_password": ""}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+
+    def test_rejects_email_used_by_another_user(self):
+        get_user_model().objects.create_user(
+            username="another_owner",
+            email="used@example.com",
+            password="AnotherPass2026!",
+        )
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            "/api/auth/email/",
+            data=json.dumps({
+                "email": "USED@example.com",
+                "current_password": "CurrentPass2026!",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_updates_recovery_email(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(
+            "/api/auth/email/",
+            data=json.dumps({
+                "email": "NEW@example.com",
+                "current_password": "CurrentPass2026!",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.email, "new@example.com")
+        self.assertEqual(response.json()["user"]["email"], "new@example.com")
 
 # Create your tests here.

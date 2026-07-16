@@ -7,6 +7,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.core.cache import cache
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
+from django.core.validators import validate_email
 from django.contrib.sessions.models import Session
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
@@ -442,14 +443,24 @@ def register_user(request):
     email = (data.get("email") or "").strip()
     nickname = (data.get("nickname") or username).strip()
 
-    if not username or not password:
-        return with_cors(JsonResponse({"error": "请输入账号和密码"}, status=400), request)
-    if len(password) < 6:
-        return with_cors(JsonResponse({"error": "密码至少需要 6 位"}, status=400), request)
+    if not username or not password or not email:
+        return with_cors(JsonResponse({"error": "请输入账号、邮箱和密码"}, status=400), request)
+    try:
+        validate_email(email)
+    except ValidationError:
+        return with_cors(JsonResponse({"error": "请输入有效的邮箱地址"}, status=400), request)
 
     User = get_user_model()
     if User.objects.filter(username=username).exists():
         return with_cors(JsonResponse({"error": "账号已存在"}, status=409), request)
+    if User.objects.filter(email__iexact=email).exists():
+        return with_cors(JsonResponse({"error": "该邮箱已绑定其他账号"}, status=409), request)
+
+    candidate_user = User(username=username, email=email, first_name=nickname)
+    try:
+        validate_password(password, candidate_user)
+    except ValidationError as error:
+        return with_cors(JsonResponse({"error": error.messages[0]}, status=400), request)
 
     user = User.objects.create_user(username=username, password=password, email=email)
     user.first_name = nickname
@@ -536,6 +547,42 @@ def update_profile(request):
 
 @csrf_exempt
 @require_http_methods(["POST", "OPTIONS"])
+def update_email(request):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再设置邮箱"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+
+    try:
+        data = read_json(request)
+    except json.JSONDecodeError:
+        return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+
+    email = (data.get("email") or "").strip().lower()
+    current_password = data.get("current_password") or ""
+    if not email or not current_password:
+        return with_cors(JsonResponse({"error": "请输入邮箱和当前密码"}, status=400), request)
+    try:
+        validate_email(email)
+    except ValidationError:
+        return with_cors(JsonResponse({"error": "请输入有效的邮箱地址"}, status=400), request)
+    if not request.user.check_password(current_password):
+        return with_cors(JsonResponse({"error": "当前密码不正确"}, status=400), request)
+
+    User = get_user_model()
+    if User.objects.filter(email__iexact=email).exclude(pk=request.user.pk).exists():
+        return with_cors(JsonResponse({"error": "该邮箱已绑定其他账号"}, status=409), request)
+
+    request.user.email = email
+    request.user.save(update_fields=["email"])
+    return with_cors(JsonResponse({"user": user_payload(request.user)}, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
 def change_password(request):
     if request.method == "OPTIONS":
         return options_response(request)
@@ -597,18 +644,23 @@ def request_password_reset(request):
     cache.set(throttle_key, True, 60)
 
     User = get_user_model()
-    user = User.objects.filter(email__iexact=email, is_active=True).first()
-    if user:
-        uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
+    users = list(User.objects.filter(email__iexact=email, is_active=True).order_by("id")[:10])
+    if users:
         public_url = settings.TUNERHUB_PUBLIC_URL or request.build_absolute_uri("/").rstrip("/")
-        reset_url = f"{public_url.rstrip('/')}/reset-password/{uid}/{token}"
+        reset_entries = []
+        for user in users:
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            reset_url = f"{public_url.rstrip('/')}/reset-password/{uid}/{token}"
+            reset_entries.append(f"账号：{user.username}\n{reset_url}")
         try:
             send_mail(
                 "重置 Tuner Hub 登录密码",
-                f"你正在重置 Tuner Hub 登录密码。请在有效期内打开以下链接：\n\n{reset_url}\n\n如果不是你本人操作，请忽略此邮件。",
+                "你正在重置 Tuner Hub 登录密码。请根据账号打开对应链接：\n\n"
+                + "\n\n".join(reset_entries)
+                + "\n\n如果不是你本人操作，请忽略此邮件。",
                 settings.DEFAULT_FROM_EMAIL,
-                [user.email],
+                [email],
                 fail_silently=False,
             )
         except Exception:

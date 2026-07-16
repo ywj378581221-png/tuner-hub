@@ -447,6 +447,10 @@ button {
   grid-template-columns: repeat(3, minmax(0, 220px)) auto;
 }
 
+.settings-form .email-fields {
+  grid-template-columns: minmax(0, 280px) minmax(0, 220px) auto;
+}
+
 .level-rules {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2314,6 +2318,7 @@ button {
   }
 
   .settings-form > div,
+  .settings-form .email-fields,
   .settings-form .password-fields {
     grid-template-columns: 1fr;
   }
