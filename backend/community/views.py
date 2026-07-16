@@ -492,6 +492,41 @@ def logout_user(request):
 
 @csrf_exempt
 @require_http_methods(["POST", "OPTIONS"])
+def update_profile(request):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再修改昵称"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+
+    try:
+        data = read_json(request)
+    except json.JSONDecodeError:
+        return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+
+    nickname = (data.get("nickname") or "").strip()
+    if not nickname:
+        return with_cors(JsonResponse({"error": "昵称不能为空"}, status=400), request)
+    if len(nickname) > 20:
+        return with_cors(JsonResponse({"error": "昵称不能超过 20 个字符"}, status=400), request)
+    if not nickname.isprintable():
+        return with_cors(JsonResponse({"error": "昵称包含无效字符"}, status=400), request)
+
+    profile = profile_for(request.user)
+    old_names = author_names_for(request.user, profile)
+    profile.nickname = nickname
+    profile.save(update_fields=["nickname", "updated_at"])
+    request.user.first_name = nickname
+    request.user.save(update_fields=["first_name"])
+    Post.objects.filter(author__in=old_names).update(author=nickname)
+
+    return with_cors(JsonResponse({"user": user_payload(request.user)}, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
 def upload_avatar(request):
     if request.method == "OPTIONS":
         return options_response(request)

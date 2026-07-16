@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import path, re_path
-from community.views import create_garage_vehicle, create_post, create_project_record, current_user, delete_post, login_user, logout_user, private_messages, register_user, send_private_message, site_data, toggle_follow_user, upload_avatar
+from community.views import create_garage_vehicle, create_post, create_project_record, current_user, delete_post, login_user, logout_user, private_messages, register_user, send_private_message, site_data, toggle_follow_user, update_profile, upload_avatar
 from tunerhub.views import frontend_app
 
 urlpatterns = [
@@ -27,6 +27,7 @@ urlpatterns = [
     path('api/auth/register/', register_user, name='register-user'),
     path('api/auth/login/', login_user, name='login-user'),
     path('api/auth/logout/', logout_user, name='logout-user'),
+    path('api/auth/profile/', update_profile, name='update-profile'),
     path('api/auth/avatar/', upload_avatar, name='upload-avatar'),
     path('api/users/<int:user_id>/follow/', toggle_follow_user, name='toggle-follow-user'),
     path('api/users/<int:user_id>/message/', send_private_message, name='send-private-message'),

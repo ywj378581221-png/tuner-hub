@@ -117,6 +117,8 @@ const authMode = ref("login");
 const authMessage = ref("");
 const authForm = ref({ username: "", password: "", email: "", nickname: "" });
 const currentUser = ref(null);
+const nicknameDraft = ref("");
+const nicknameSaving = ref(false);
 const userCards = ref([]);
 const inboxMessages = ref([]);
 const messageTarget = ref(null);
@@ -157,6 +159,11 @@ const displayUser = computed(() => currentUser.value || {
   signature: "登录后查看真实账号数据",
 });
 const avatarSrc = computed(() => mediaUrl(displayUser.value.avatar) || defaultAvatar);
+
+function applyCurrentUser(user) {
+  currentUser.value = user;
+  nicknameDraft.value = user?.nickname || "";
+}
 
 const enrichedCars = computed(() => carCards.value.map((car) => {
   const trims = [
@@ -515,9 +522,9 @@ async function loadSiteData() {
 async function checkCurrentUser() {
   try {
     const data = await apiFetch("/api/auth/me/");
-    currentUser.value = data.user;
+    applyCurrentUser(data.user);
   } catch {
-    currentUser.value = null;
+    applyCurrentUser(null);
   }
 }
 
@@ -585,7 +592,7 @@ async function submitAuth() {
       method: "POST",
       body: JSON.stringify(authForm.value),
     });
-    currentUser.value = data.user;
+    applyCurrentUser(data.user);
     showAuthModal.value = false;
     showToast(authMode.value === "login" ? "登录成功" : "注册成功");
   } catch (error) {
@@ -597,7 +604,7 @@ async function logoutAccount() {
   try {
     await apiFetch("/api/auth/logout/", { method: "POST", body: "{}" });
   } finally {
-    currentUser.value = null;
+    applyCurrentUser(null);
     showToast("已退出登录");
   }
 }
@@ -631,12 +638,30 @@ async function uploadAvatar(event) {
       method: "POST",
       body: formData,
     });
-    currentUser.value = data.user;
+    applyCurrentUser(data.user);
     showToast("头像已更新");
   } catch (error) {
     showToast(error.message);
   } finally {
     event.target.value = "";
+  }
+}
+
+async function saveNickname() {
+  if (!currentUser.value || nicknameSaving.value) return;
+  nicknameSaving.value = true;
+  try {
+    const data = await apiFetch("/api/auth/profile/", {
+      method: "POST",
+      body: JSON.stringify({ nickname: nicknameDraft.value }),
+    });
+    applyCurrentUser(data.user);
+    await loadSiteData();
+    showToast("昵称已更新");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    nicknameSaving.value = false;
   }
 }
 
@@ -656,7 +681,7 @@ async function toggleFollow(user) {
       if (item.id === data.current_user.id) return { ...item, ...data.current_user };
       return item;
     });
-    if (currentUser.value?.id === data.current_user.id) currentUser.value = data.current_user;
+    if (currentUser.value?.id === data.current_user.id) applyCurrentUser(data.current_user);
     showToast(data.following ? "已关注" : "已取消关注");
     await loadSiteData();
   } catch (error) {
@@ -966,6 +991,16 @@ async function publishPost() {
                   <button v-else class="post-button" @click="openAuth('login')">登录后设置头像</button>
                 </div>
               </div>
+              <form v-if="currentUser" class="nickname-form" @submit.prevent="saveNickname">
+                <label for="profile-nickname">昵称</label>
+                <div>
+                  <input id="profile-nickname" v-model="nicknameDraft" maxlength="20" autocomplete="nickname" />
+                  <button type="submit" :disabled="nicknameSaving || !nicknameDraft.trim()">
+                    <CheckCircle :size="18" />
+                    {{ nicknameSaving ? '保存中' : '保存昵称' }}
+                  </button>
+                </div>
+              </form>
               <div class="level-rules">
                 <div>
                   <h2>等级规则</h2>
