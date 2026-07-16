@@ -394,7 +394,7 @@ button {
   color: var(--muted);
 }
 
-.nickname-form {
+.settings-form {
   display: grid;
   gap: 7px;
   margin-top: 16px;
@@ -402,19 +402,19 @@ button {
   border-top: 1px solid var(--line);
 }
 
-.nickname-form label {
+.settings-form label {
   font-size: 13px;
   font-weight: 700;
 }
 
-.nickname-form > div {
+.settings-form > div {
   display: grid;
   grid-template-columns: minmax(0, 320px) auto;
   gap: 8px;
   justify-content: start;
 }
 
-.nickname-form input {
+.settings-form input {
   min-width: 0;
   height: 38px;
   padding: 0 11px;
@@ -423,7 +423,7 @@ button {
   background: white;
 }
 
-.nickname-form button {
+.settings-form button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -438,9 +438,13 @@ button {
   font-weight: 700;
 }
 
-.nickname-form button:disabled {
+.settings-form button:disabled {
   cursor: not-allowed;
   opacity: 0.5;
+}
+
+.settings-form .password-fields {
+  grid-template-columns: repeat(3, minmax(0, 220px)) auto;
 }
 
 .level-rules {
@@ -2016,6 +2020,24 @@ button {
   outline: 0;
 }
 
+.forgot-password-button,
+.auth-back-button {
+  width: fit-content;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #555;
+  font-size: 13px;
+}
+
+.forgot-password-button {
+  justify-self: end;
+}
+
+.auth-back-button {
+  justify-self: center;
+}
+
 .auth-modal {
   width: min(420px, calc(100vw - 28px));
 }
@@ -2291,11 +2313,12 @@ button {
     grid-template-columns: 1fr;
   }
 
-  .nickname-form > div {
+  .settings-form > div,
+  .settings-form .password-fields {
     grid-template-columns: 1fr;
   }
 
-  .nickname-form button {
+  .settings-form button {
     width: 100%;
   }
 

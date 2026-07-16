@@ -116,9 +116,12 @@ const showProjectModal = ref(false);
 const authMode = ref("login");
 const authMessage = ref("");
 const authForm = ref({ username: "", password: "", email: "", nickname: "" });
+const resetForm = ref({ email: "", uid: "", token: "", new_password: "", confirm_password: "" });
 const currentUser = ref(null);
 const nicknameDraft = ref("");
 const nicknameSaving = ref(false);
+const passwordForm = ref({ current_password: "", new_password: "", confirm_password: "" });
+const passwordSaving = ref(false);
 const userCards = ref([]);
 const inboxMessages = ref([]);
 const messageTarget = ref(null);
@@ -159,6 +162,12 @@ const displayUser = computed(() => currentUser.value || {
   signature: "登录后查看真实账号数据",
 });
 const avatarSrc = computed(() => mediaUrl(displayUser.value.avatar) || defaultAvatar);
+const authTitle = computed(() => ({
+  login: "登录 Tuner Hub",
+  register: "注册 Tuner Hub",
+  forgot: "找回密码",
+  reset: "设置新密码",
+}[authMode.value]));
 
 function applyCurrentUser(user) {
   currentUser.value = user;
@@ -542,6 +551,11 @@ async function loadMessages() {
 }
 
 onMounted(async () => {
+  if (route.path.startsWith("/reset-password/")) {
+    resetForm.value.uid = String(route.params.uid || "");
+    resetForm.value.token = String(route.params.token || "");
+    openAuth("reset");
+  }
   await checkCurrentUser();
   await loadSiteData();
   await loadMessages();
@@ -586,6 +600,37 @@ function openAuth(mode = "login") {
 
 async function submitAuth() {
   authMessage.value = "";
+  if (authMode.value === "forgot") {
+    try {
+      const data = await apiFetch("/api/auth/password-reset/request/", {
+        method: "POST",
+        body: JSON.stringify({ email: resetForm.value.email }),
+      });
+      authMessage.value = data.message;
+    } catch (error) {
+      authMessage.value = error.message;
+    }
+    return;
+  }
+  if (authMode.value === "reset") {
+    if (resetForm.value.new_password !== resetForm.value.confirm_password) {
+      authMessage.value = "两次输入的新密码不一致";
+      return;
+    }
+    try {
+      await apiFetch("/api/auth/password-reset/confirm/", {
+        method: "POST",
+        body: JSON.stringify(resetForm.value),
+      });
+      authMode.value = "login";
+      authMessage.value = "密码已重置，请使用新密码登录";
+      resetForm.value = { email: "", uid: "", token: "", new_password: "", confirm_password: "" };
+      router.replace("/");
+    } catch (error) {
+      authMessage.value = error.message;
+    }
+    return;
+  }
   try {
     const endpoint = authMode.value === "login" ? "/api/auth/login/" : "/api/auth/register/";
     const data = await apiFetch(endpoint, {
@@ -662,6 +707,27 @@ async function saveNickname() {
     showToast(error.message);
   } finally {
     nicknameSaving.value = false;
+  }
+}
+
+async function savePassword() {
+  if (!currentUser.value || passwordSaving.value) return;
+  if (passwordForm.value.new_password !== passwordForm.value.confirm_password) {
+    showToast("两次输入的新密码不一致");
+    return;
+  }
+  passwordSaving.value = true;
+  try {
+    await apiFetch("/api/auth/password/", {
+      method: "POST",
+      body: JSON.stringify(passwordForm.value),
+    });
+    passwordForm.value = { current_password: "", new_password: "", confirm_password: "" };
+    showToast("密码已更新");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    passwordSaving.value = false;
   }
 }
 
@@ -991,13 +1057,25 @@ async function publishPost() {
                   <button v-else class="post-button" @click="openAuth('login')">登录后设置头像</button>
                 </div>
               </div>
-              <form v-if="currentUser" class="nickname-form" @submit.prevent="saveNickname">
+              <form v-if="currentUser" class="settings-form" @submit.prevent="saveNickname">
                 <label for="profile-nickname">昵称</label>
                 <div>
                   <input id="profile-nickname" v-model="nicknameDraft" maxlength="20" autocomplete="nickname" />
                   <button type="submit" :disabled="nicknameSaving || !nicknameDraft.trim()">
                     <CheckCircle :size="18" />
                     {{ nicknameSaving ? '保存中' : '保存昵称' }}
+                  </button>
+                </div>
+              </form>
+              <form v-if="currentUser" class="settings-form password-form" @submit.prevent="savePassword">
+                <label for="current-password">修改密码</label>
+                <div class="password-fields">
+                  <input id="current-password" v-model="passwordForm.current_password" type="password" autocomplete="current-password" placeholder="当前密码" />
+                  <input v-model="passwordForm.new_password" type="password" autocomplete="new-password" placeholder="新密码" />
+                  <input v-model="passwordForm.confirm_password" type="password" autocomplete="new-password" placeholder="确认新密码" />
+                  <button type="submit" :disabled="passwordSaving || !passwordForm.current_password || !passwordForm.new_password || !passwordForm.confirm_password">
+                    <CheckCircle :size="18" />
+                    {{ passwordSaving ? '保存中' : '修改密码' }}
                   </button>
                 </div>
               </form>
@@ -1417,19 +1495,26 @@ async function publishPost() {
       <button class="scrim" @click="showAuthModal = false"></button>
       <section class="auth-modal">
         <div class="modal-head">
-          <h2>{{ authMode === 'login' ? '登录 Tuner Hub' : '注册 Tuner Hub' }}</h2>
+          <h2>{{ authTitle }}</h2>
           <button class="icon-button" @click="showAuthModal = false"><X :size="20" /></button>
         </div>
-        <div class="auth-tabs">
+        <div v-if="authMode === 'login' || authMode === 'register'" class="auth-tabs">
           <button :class="{ active: authMode === 'login' }" @click="authMode = 'login'; authMessage = ''">登录</button>
           <button :class="{ active: authMode === 'register' }" @click="authMode = 'register'; authMessage = ''">注册</button>
         </div>
-        <input v-model="authForm.username" placeholder="账号" />
+        <input v-if="authMode === 'login' || authMode === 'register'" v-model="authForm.username" placeholder="账号" />
         <input v-if="authMode === 'register'" v-model="authForm.nickname" placeholder="昵称" />
         <input v-if="authMode === 'register'" v-model="authForm.email" placeholder="邮箱" />
-        <input v-model="authForm.password" placeholder="密码" type="password" />
+        <input v-if="authMode === 'login' || authMode === 'register'" v-model="authForm.password" placeholder="密码" type="password" />
+        <input v-if="authMode === 'forgot'" v-model="resetForm.email" placeholder="注册邮箱" type="email" autocomplete="email" />
+        <input v-if="authMode === 'reset'" v-model="resetForm.new_password" placeholder="新密码" type="password" autocomplete="new-password" />
+        <input v-if="authMode === 'reset'" v-model="resetForm.confirm_password" placeholder="确认新密码" type="password" autocomplete="new-password" />
+        <button v-if="authMode === 'login'" class="forgot-password-button" @click="authMode = 'forgot'; authMessage = ''">忘记密码？</button>
         <p v-if="authMessage" class="form-message">{{ authMessage }}</p>
-        <button class="post-button" @click="submitAuth">{{ authMode === 'login' ? '登录' : '注册并登录' }}</button>
+        <button class="post-button" @click="submitAuth">
+          {{ authMode === 'login' ? '登录' : authMode === 'register' ? '注册并登录' : authMode === 'forgot' ? '发送重置邮件' : '重置密码' }}
+        </button>
+        <button v-if="authMode === 'forgot'" class="auth-back-button" @click="authMode = 'login'; authMessage = ''">返回登录</button>
       </section>
     </div>
 

@@ -46,6 +46,16 @@ CSRF_COOKIE_SECURE = os.environ.get('TUNERHUB_CSRF_COOKIE_SECURE', '1' if not DE
 X_FRAME_OPTIONS = 'SAMEORIGIN'
 SILENCED_SYSTEM_CHECKS = ['security.W002']
 
+TUNERHUB_PUBLIC_URL = os.environ.get('TUNERHUB_PUBLIC_URL', '').strip()
+EMAIL_BACKEND = os.environ.get('TUNERHUB_EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.environ.get('TUNERHUB_EMAIL_HOST', '')
+EMAIL_PORT = int(os.environ.get('TUNERHUB_EMAIL_PORT', '25'))
+EMAIL_HOST_USER = os.environ.get('TUNERHUB_EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.environ.get('TUNERHUB_EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.environ.get('TUNERHUB_EMAIL_USE_TLS', '0') == '1'
+EMAIL_USE_SSL = os.environ.get('TUNERHUB_EMAIL_USE_SSL', '0') == '1'
+DEFAULT_FROM_EMAIL = os.environ.get('TUNERHUB_DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'noreply@tunerhub.local')
+
 
 # Application definition
 

@@ -18,6 +18,7 @@ const router = createRouter({
     { path: "/messages", component: RouteHost },
     { path: "/messages/:id", component: RouteHost },
     { path: "/notifications", component: RouteHost },
+    { path: "/reset-password/:uid/:token", component: RouteHost },
     { path: "/post/:id", component: RouteHost },
     { path: "/cars/:slug/community", component: RouteHost },
     { path: "/cars/:slug", component: RouteHost },

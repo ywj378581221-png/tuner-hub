@@ -1,7 +1,16 @@
 import json
-from django.contrib.auth import authenticate, get_user_model, login, logout
+import hashlib
+from django.conf import settings
+from django.contrib.auth import authenticate, get_user_model, login, logout, update_session_auth_hash
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
+from django.core.cache import cache
+from django.core.exceptions import ValidationError
+from django.core.mail import send_mail
 from django.contrib.sessions.models import Session
 from django.utils import timezone
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
@@ -523,6 +532,128 @@ def update_profile(request):
     Post.objects.filter(author__in=old_names).update(author=nickname)
 
     return with_cors(JsonResponse({"user": user_payload(request.user)}, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def change_password(request):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再修改密码"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+
+    try:
+        data = read_json(request)
+    except json.JSONDecodeError:
+        return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+
+    current_password = data.get("current_password") or ""
+    new_password = data.get("new_password") or ""
+    confirm_password = data.get("confirm_password") or ""
+    if not current_password or not new_password or not confirm_password:
+        return with_cors(JsonResponse({"error": "请填写完整的密码信息"}, status=400), request)
+    if not request.user.check_password(current_password):
+        return with_cors(JsonResponse({"error": "当前密码不正确"}, status=400), request)
+    if new_password != confirm_password:
+        return with_cors(JsonResponse({"error": "两次输入的新密码不一致"}, status=400), request)
+    if current_password == new_password:
+        return with_cors(JsonResponse({"error": "新密码不能与当前密码相同"}, status=400), request)
+
+    try:
+        validate_password(new_password, request.user)
+    except ValidationError as error:
+        return with_cors(JsonResponse({"error": error.messages[0]}, status=400), request)
+
+    request.user.set_password(new_password)
+    request.user.save(update_fields=["password"])
+    update_session_auth_hash(request, request.user)
+    clear_other_user_sessions(request.user, request.session.session_key)
+    return with_cors(JsonResponse({"ok": True}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def request_password_reset(request):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    try:
+        data = read_json(request)
+    except json.JSONDecodeError:
+        return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+
+    email = (data.get("email") or "").strip().lower()
+    if not email:
+        return with_cors(JsonResponse({"error": "请输入注册邮箱"}, status=400), request)
+
+    client_ip = request.META.get("REMOTE_ADDR", "")
+    throttle_digest = hashlib.sha256(f"{client_ip}:{email}".encode("utf-8")).hexdigest()
+    throttle_key = f"password-reset:{throttle_digest}"
+    generic_message = "如果该邮箱已注册，重置链接会发送到邮箱"
+    if cache.get(throttle_key):
+        return with_cors(JsonResponse({"message": generic_message}), request)
+    cache.set(throttle_key, True, 60)
+
+    User = get_user_model()
+    user = User.objects.filter(email__iexact=email, is_active=True).first()
+    if user:
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        public_url = settings.TUNERHUB_PUBLIC_URL or request.build_absolute_uri("/").rstrip("/")
+        reset_url = f"{public_url.rstrip('/')}/reset-password/{uid}/{token}"
+        try:
+            send_mail(
+                "重置 Tuner Hub 登录密码",
+                f"你正在重置 Tuner Hub 登录密码。请在有效期内打开以下链接：\n\n{reset_url}\n\n如果不是你本人操作，请忽略此邮件。",
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                fail_silently=False,
+            )
+        except Exception:
+            # Keep the response indistinguishable from an unknown email address.
+            pass
+
+    return with_cors(JsonResponse({"message": generic_message}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def confirm_password_reset(request):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    try:
+        data = read_json(request)
+    except json.JSONDecodeError:
+        return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+
+    uid = data.get("uid") or ""
+    token = data.get("token") or ""
+    new_password = data.get("new_password") or ""
+    confirm_password = data.get("confirm_password") or ""
+    if not uid or not token or not new_password or not confirm_password:
+        return with_cors(JsonResponse({"error": "请填写完整的密码信息"}, status=400), request)
+    if new_password != confirm_password:
+        return with_cors(JsonResponse({"error": "两次输入的新密码不一致"}, status=400), request)
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(pk=force_str(urlsafe_base64_decode(uid)), is_active=True)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        user = None
+    if not user or not default_token_generator.check_token(user, token):
+        return with_cors(JsonResponse({"error": "重置链接无效或已过期"}, status=400), request)
+
+    try:
+        validate_password(new_password, user)
+    except ValidationError as error:
+        return with_cors(JsonResponse({"error": error.messages[0]}, status=400), request)
+
+    user.set_password(new_password)
+    user.save(update_fields=["password"])
+    clear_other_user_sessions(user)
+    return with_cors(JsonResponse({"ok": True}), request)
 
 
 @csrf_exempt
