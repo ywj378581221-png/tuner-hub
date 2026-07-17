@@ -14,7 +14,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
-from .models import Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, UserGarageVehicle, UserProfile
+from .models import Article, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, UserGarageVehicle, UserProfile
 
 
 class UpdateProfileTests(TestCase):
@@ -491,6 +491,7 @@ class PostImageUploadTests(TestCase):
                 "car": "",
                 "specs": json.dumps(["轮毂: 18x9.5J", "动力: 450 hp"]),
                 "location": "上海国际赛车场",
+                "image_caption": "赛道日拍摄的车辆状态",
                 "image": image,
             },
         )
@@ -501,7 +502,9 @@ class PostImageUploadTests(TestCase):
         self.assertTrue(post.image_upload.name.startswith("posts/"))
         self.assertEqual(post.specs, ["轮毂: 18x9.5J", "动力: 450 hp"])
         self.assertEqual(post.location, "上海国际赛车场")
+        self.assertEqual(post.image_caption, "赛道日拍摄的车辆状态")
         self.assertTrue(response.json()["post"]["image"].startswith("/media/posts/"))
+        self.assertEqual(response.json()["post"]["image_caption"], "赛道日拍摄的车辆状态")
         self.assertEqual(response.json()["post"]["location"], "上海国际赛车场")
 
     def test_rejects_disguised_post_image(self):
@@ -569,6 +572,74 @@ class PostImageUploadTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "最多添加 8 项参数")
         self.assertEqual(Post.objects.count(), 0)
+
+    def test_rejects_image_caption_without_image(self):
+        response = self.client.post(
+            "/api/posts/create/",
+            data=json.dumps({
+                "title": "缺少图片",
+                "body": "图片说明不能脱离图片单独发布。",
+                "image_caption": "这条说明没有对应图片",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "添加图片后才能填写图片说明")
+        self.assertEqual(Post.objects.count(), 0)
+
+    def test_rejects_image_caption_over_two_hundred_characters(self):
+        image = SimpleUploadedFile(
+            "m2c.png",
+            AvatarUploadSecurityTests.valid_png,
+            content_type="image/png",
+        )
+        response = self.client.post(
+            "/api/posts/create/",
+            {
+                "title": "图片说明过长",
+                "body": "说明超过限制时不应发布。",
+                "image_caption": "图" * 201,
+                "image": image,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "图片说明不能超过 200 个字符")
+        self.assertEqual(Post.objects.count(), 0)
+
+
+class PinnedContentPresentationTests(TestCase):
+    def test_site_data_orders_pinned_content_first_and_includes_captions(self):
+        normal_post = Post.objects.create(title="普通帖子", body="普通内容")
+        pinned_post = Post.objects.create(
+            title="置顶帖子",
+            body="重要内容",
+            image="https://example.com/pinned-post.jpg",
+            image_caption="置顶帖图片说明",
+            is_pinned=True,
+        )
+        Article.objects.create(title="普通文章", slug="normal-article", body="普通文章内容")
+        pinned_article = Article.objects.create(
+            title="置顶文章",
+            slug="pinned-article",
+            body="长期用车案例",
+            image="https://example.com/pinned-article.jpg",
+            image_caption="21万公里仪表记录",
+            is_pinned=True,
+        )
+
+        response = self.client.get("/api/site-data/")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["posts"][0]["id"], pinned_post.id)
+        self.assertTrue(data["posts"][0]["is_pinned"])
+        self.assertEqual(data["posts"][0]["image_caption"], "置顶帖图片说明")
+        self.assertNotEqual(data["posts"][0]["id"], normal_post.id)
+        self.assertEqual(data["articles"][0]["id"], pinned_article.id)
+        self.assertTrue(data["articles"][0]["is_pinned"])
+        self.assertEqual(data["articles"][0]["image_caption"], "21万公里仪表记录")
 
 
 class PostInteractionTests(TestCase):
@@ -800,6 +871,11 @@ class FrontendInteractionContractTests(SimpleTestCase):
         self.assertIn('@click="openSpecsComposer()"', community_section)
         self.assertIn('class="activity-tabs"', community_section)
         self.assertIn('"聊车"', self.source)
+
+    def test_image_captions_and_pinned_badges_are_rendered(self):
+        self.assertIn("image_caption", self.source)
+        self.assertIn("is_pinned", self.source)
+        self.assertIn("<figcaption", self.source)
 
 
 class PublicUserPrivacyTests(TestCase):

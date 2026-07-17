@@ -1026,6 +1026,21 @@ button {
   font-size: 12px;
 }
 
+.pin-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid #d43b3b;
+  border-radius: 4px;
+  background: #fff4f4;
+  color: #c72f2f;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
@@ -1289,11 +1304,89 @@ button {
   border-radius: 6px;
 }
 
+.detail-media {
+  min-width: 0;
+  margin: 0;
+}
+
 .detail-hero-card img {
   width: 100%;
   height: 220px;
   object-fit: cover;
   border-radius: 5px;
+}
+
+.detail-media figcaption,
+.article-cover figcaption {
+  margin-top: 7px;
+  color: #747b86;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.detail-labels,
+.article-detail-labels {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.article-detail {
+  padding: 24px clamp(20px, 5vw, 64px) 34px;
+  background: white;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.article-detail header {
+  max-width: 780px;
+  margin: 0 auto 22px;
+}
+
+.article-detail-labels > span {
+  color: #9a7200;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.article-detail h1 {
+  margin: 10px 0 12px;
+  font-size: 34px;
+  line-height: 1.25;
+}
+
+.article-summary {
+  margin: 0 0 12px;
+  color: #555b65;
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+.article-detail header small {
+  color: #8a9099;
+}
+
+.article-cover {
+  max-width: 840px;
+  margin: 0 auto 26px;
+}
+
+.article-cover img {
+  display: block;
+  width: 100%;
+  max-height: 560px;
+  object-fit: contain;
+  background: #f4f5f7;
+}
+
+.article-body {
+  max-width: 780px;
+  margin: 0 auto;
+  color: #2f3339;
+  font-size: 16px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .detail-hero-card span {
@@ -2157,6 +2250,7 @@ button {
 }
 
 .composer-title,
+.composer-caption-input,
 .auth-modal input {
   width: 100%;
   height: 40px;
@@ -2545,6 +2639,19 @@ button {
 }
 
 @media (max-width: 620px) {
+  .article-detail {
+    padding: 18px 14px 26px;
+  }
+
+  .article-detail h1 {
+    font-size: 26px;
+  }
+
+  .article-body {
+    font-size: 15px;
+    line-height: 1.8;
+  }
+
   .activity-tabs .sort-button {
     display: none;
   }

@@ -208,6 +208,7 @@ class Post(TimeStampedModel):
     tone = models.CharField("颜色标识", max_length=20, default="gray")
     image = models.CharField("图片地址", max_length=300, blank=True)
     image_upload = models.FileField("上传图片", upload_to="posts/", blank=True)
+    image_caption = models.CharField("图片说明", max_length=200, blank=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="发布用户", related_name="community_posts", on_delete=models.SET_NULL, null=True, blank=True)
     author = models.CharField("作者", max_length=120, blank=True)
     time_label = models.CharField("时间显示", max_length=80, blank=True)
@@ -219,13 +220,14 @@ class Post(TimeStampedModel):
     progress = models.PositiveIntegerField("项目进度", default=0)
     specs = models.JSONField("配置参数", default=list, blank=True)
     location = models.CharField("位置", max_length=120, blank=True)
+    is_pinned = models.BooleanField("置顶", default=False)
     featured = models.BooleanField("首页精选", default=False)
     state = models.CharField("发布状态", max_length=20, choices=PublishState.choices, default=PublishState.PUBLISHED)
 
     class Meta:
         verbose_name = "帖子"
         verbose_name_plural = "帖子"
-        ordering = ["-created_at"]
+        ordering = ["-is_pinned", "-created_at"]
 
     def __str__(self):
         return self.title
@@ -354,15 +356,17 @@ class Article(TimeStampedModel):
     body = models.TextField("正文", blank=True)
     image = models.CharField("封面图", max_length=300, blank=True)
     image_upload = models.FileField("上传封面图", upload_to="articles/", blank=True)
+    image_caption = models.CharField("图片说明", max_length=200, blank=True)
     author = models.CharField("作者", max_length=120, blank=True, default="")
     car = models.ForeignKey(Car, verbose_name="关联车型", on_delete=models.SET_NULL, null=True, blank=True)
+    is_pinned = models.BooleanField("置顶", default=False)
     featured = models.BooleanField("首页推荐", default=False)
     state = models.CharField("发布状态", max_length=20, choices=PublishState.choices, default=PublishState.PUBLISHED)
 
     class Meta:
         verbose_name = "资讯文章"
         verbose_name_plural = "资讯文章"
-        ordering = ["-created_at"]
+        ordering = ["-is_pinned", "-created_at"]
 
     def __str__(self):
         return self.title

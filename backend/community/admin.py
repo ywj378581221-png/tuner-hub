@@ -124,11 +124,11 @@ class PrivateMessageAdmin(admin.ModelAdmin):
 
 @admin.register(Post)
 class PostAdmin(ImageUploadAdminMixin, admin.ModelAdmin):
-    list_display = ("title", "post_type", "owner", "author", "car", "club", "featured", "state", "created_at")
-    list_filter = ("post_type", "featured", "state", "created_at")
+    list_display = ("title", "post_type", "owner", "author", "car", "club", "is_pinned", "featured", "state", "created_at")
+    list_filter = ("post_type", "is_pinned", "featured", "state", "created_at")
     search_fields = ("title", "body", "author")
-    list_editable = ("featured", "state")
-    fields = ("title", "body", "post_type", "tone", "image_upload", "image_preview", "image", "owner", "author", "time_label", "car", "club", "shop", "location", "likes", "comments", "progress", "specs", "featured", "state")
+    list_editable = ("is_pinned", "featured", "state")
+    fields = ("title", "body", "post_type", "tone", "image_upload", "image_preview", "image_caption", "image", "owner", "author", "time_label", "car", "club", "shop", "location", "likes", "comments", "progress", "specs", "is_pinned", "featured", "state")
 
 
 @admin.register(PostSave)
@@ -222,9 +222,9 @@ class GuideAdmin(admin.ModelAdmin):
 
 @admin.register(Article)
 class ArticleAdmin(ImageUploadAdminMixin, admin.ModelAdmin):
-    list_display = ("title", "category", "author", "car", "featured", "state", "created_at")
-    list_filter = ("category", "featured", "state", "created_at")
+    list_display = ("title", "category", "author", "car", "is_pinned", "featured", "state", "created_at")
+    list_filter = ("category", "is_pinned", "featured", "state", "created_at")
     search_fields = ("title", "summary", "body", "author")
-    list_editable = ("featured", "state")
+    list_editable = ("is_pinned", "featured", "state")
     prepopulated_fields = {"slug": ("title",)}
-    fields = ("title", "slug", "category", "summary", "body", "image_upload", "image_preview", "image", "author", "car", "featured", "state")
+    fields = ("title", "slug", "category", "summary", "body", "image_upload", "image_preview", "image_caption", "image", "author", "car", "is_pinned", "featured", "state")

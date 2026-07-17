@@ -343,6 +343,7 @@ def post_payload(post, saved_ids=None, liked_ids=None):
         "type": post.post_type,
         "tone": post.tone,
         "image": content_image_url(post),
+        "image_caption": post.image_caption,
         "author": post.author,
         "time": relative_time_label(post.created_at),
         "created_at": post.created_at.isoformat(),
@@ -358,6 +359,7 @@ def post_payload(post, saved_ids=None, liked_ids=None):
         "is_saved": bool(saved_ids is not None and post.id in saved_ids),
         "is_liked": bool(liked_ids is not None and post.id in liked_ids),
         "featured": post.featured,
+        "is_pinned": post.is_pinned,
     }
 
 
@@ -383,9 +385,11 @@ def article_payload(article):
         "summary": article.summary,
         "body": article.body,
         "image": content_image_url(article),
+        "image_caption": article.image_caption,
         "author": article.author,
         "car": article.car.name if article.car else "",
         "featured": article.featured,
+        "is_pinned": article.is_pinned,
     }
 
 
@@ -1013,6 +1017,7 @@ def create_post(request):
     post_type = (data.get("type") or "聊车").strip()
     car_value = (data.get("car") or "").strip()
     location = (data.get("location") or "").strip()
+    image_caption = (data.get("image_caption") or "").strip()
     if not title or not body:
         return with_cors(JsonResponse({"error": "标题和正文不能为空"}, status=400), request)
     if len(title) > 180:
@@ -1021,6 +1026,8 @@ def create_post(request):
         return with_cors(JsonResponse({"error": "正文不能超过 20000 个字符"}, status=400), request)
     if len(location) > 120:
         return with_cors(JsonResponse({"error": "位置不能超过 120 个字符"}, status=400), request)
+    if len(image_caption) > 200:
+        return with_cors(JsonResponse({"error": "图片说明不能超过 200 个字符"}, status=400), request)
 
     try:
         specs = normalize_post_specs(data.get("specs"))
@@ -1028,6 +1035,9 @@ def create_post(request):
         return with_cors(JsonResponse({"error": str(error)}, status=400), request)
 
     post_image = request.FILES.get("image")
+    image_url = (data.get("image") or "").strip()
+    if image_caption and not post_image and not image_url:
+        return with_cors(JsonResponse({"error": "添加图片后才能填写图片说明"}, status=400), request)
     if post_image:
         image_error = validate_uploaded_image(post_image, label="帖子图片", max_size_mb=10)
         if image_error:
@@ -1042,8 +1052,9 @@ def create_post(request):
         body=body,
         post_type=post_type if post_type in tone_map else "聊车",
         tone=tone_map.get(post_type, "gray"),
-        image="" if post_image else (data.get("image") or ""),
+        image="" if post_image else image_url,
         image_upload=post_image,
+        image_caption=image_caption,
         owner=request.user,
         author=request.user.first_name or request.user.username,
         time_label="刚刚",

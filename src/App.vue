@@ -138,6 +138,7 @@ const draftType = ref("聊车");
 const draftCar = ref("");
 const draftImage = ref(null);
 const draftImagePreview = ref("");
+const draftImageCaption = ref("");
 const postImageInput = ref(null);
 const publishingPost = ref(false);
 const showSpecsPanel = ref(false);
@@ -264,6 +265,11 @@ const routePost = computed(() => {
   return posts.value.find((post) => String(post.id) === String(route.params.id)) || null;
 });
 
+const routeArticle = computed(() => articles.value.find((article) => (
+  route.path === `/articles/${article.id}`
+  || route.path === pathFor("articles", article.slug || article.title)
+)) || null);
+
 const routeCar = computed(() => {
   if (!route.path.startsWith("/cars/")) return null;
   const currentPath = route.path.replace(/\/community\/?$/, "");
@@ -307,8 +313,10 @@ const routeDetail = computed(() => {
       type: "帖子详情",
       title: post.title,
       image: post.image,
+      imageCaption: post.image_caption || "",
       body: post.body,
       meta: `${post.author} · ${post.time}`,
+      isPinned: post.is_pinned,
       rows: [
         ["分类", post.type],
         ["车辆", post.car],
@@ -322,14 +330,16 @@ const routeDetail = computed(() => {
     };
   }
 
-  const article = articles.value.find((item) => route.path === `/articles/${item.id}` || route.path === pathFor("articles", item.slug || item.title));
+  const article = routeArticle.value;
   if (article) {
     return {
       type: `${article.category}文章`,
       title: article.title,
       image: article.image || "",
+      imageCaption: article.image_caption || "",
       body: article.body || article.summary,
       meta: `${article.author} · ${article.car || "综合内容"}`,
+      isPinned: article.is_pinned,
       rows: [["栏目", article.category], ["车型", article.car || "不限"], ["作者", article.author || "用户投稿"], ["状态", "已发布"]],
     };
   }
@@ -714,6 +724,7 @@ async function revealLocationPanel() {
 function clearDraftImage() {
   draftImage.value = null;
   draftImagePreview.value = "";
+  draftImageCaption.value = "";
   if (postImageInput.value) postImageInput.value.value = "";
 }
 
@@ -1115,12 +1126,17 @@ async function publishPost() {
       .filter(Boolean);
     formData.append("specs", JSON.stringify(specs));
     formData.append("location", draftLocation.value.trim());
+    formData.append("image_caption", draftImageCaption.value.trim());
     if (draftImage.value) formData.append("image", draftImage.value);
     const data = await apiFetch("/api/posts/create/", {
       method: "POST",
       body: formData,
     });
-    posts.value = [data.post, ...posts.value];
+    posts.value = [
+      ...posts.value.filter((post) => post.is_pinned),
+      data.post,
+      ...posts.value.filter((post) => !post.is_pinned),
+    ];
     showComposer.value = false;
     draftTitle.value = "";
     draft.value = "";
@@ -1217,7 +1233,7 @@ async function publishPost() {
               <article v-for="post in selectedCarCommunityPosts" :key="post.id" class="feed-item" :class="{ 'without-image': !post.image }">
                 <button v-if="post.image" class="feed-image" @click="openPost(post)"><img :src="post.image" :alt="post.title" /></button>
                 <div class="feed-copy">
-                  <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><span>{{ post.author }} · {{ post.time }}</span></div>
+                  <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><b v-if="post.is_pinned" class="pin-badge">置顶</b><span>{{ post.author }} · {{ post.time }}</span></div>
                   <button class="feed-title" @click="openPost(post)">{{ post.title }}</button>
                   <p>{{ post.body }}</p>
                   <div v-if="canManageCommunity()" class="admin-actions">
@@ -1275,7 +1291,7 @@ async function publishPost() {
                 <div class="module-head"><h2>评测与导购</h2><button @click="goTo('/reviews')">更多</button></div>
                 <article v-for="article in selectedCarArticles" :key="article.id" class="article-row compact" @click="goTo(`/articles/${article.id}`)">
                   <img :src="article.image || assets.hero" :alt="article.title" />
-                  <div><span>{{ article.category }}</span><h2>{{ article.title }}</h2><p>{{ article.summary }}</p></div>
+                  <div><span>{{ article.category }}</span><b v-if="article.is_pinned" class="pin-badge">置顶</b><h2>{{ article.title }}</h2><p>{{ article.summary }}</p></div>
                 </article>
                 <p v-if="!selectedCarArticles.length" class="empty-note">暂无关联文章。</p>
               </div>
@@ -1436,10 +1452,32 @@ async function publishPost() {
               <p v-if="!query.trim()" class="empty-note">请输入关键词后按回车搜索。</p>
               <p v-else-if="!searchResultCount" class="empty-note">没有找到相关内容。</p>
             </section>
-            <article v-if="!isFunctionalListPage" class="detail-hero-card">
-              <img v-if="routeDetail.image" :src="routeDetail.image" :alt="routeDetail.title" />
+            <article v-if="routeArticle && !isFunctionalListPage" class="article-detail">
+              <header>
+                <div class="article-detail-labels">
+                  <span>{{ routeArticle.category }}文章</span>
+                  <b v-if="routeArticle.is_pinned" class="pin-badge">置顶</b>
+                </div>
+                <h1>{{ routeArticle.title }}</h1>
+                <p v-if="routeArticle.summary" class="article-summary">{{ routeArticle.summary }}</p>
+                <small>{{ routeArticle.author || '用户投稿' }} · {{ routeArticle.car || '综合内容' }}</small>
+              </header>
+              <figure v-if="routeArticle.image" class="article-cover">
+                <img :src="routeArticle.image" :alt="routeArticle.title" />
+                <figcaption v-if="routeArticle.image_caption">{{ routeArticle.image_caption }}</figcaption>
+              </figure>
+              <div class="article-body">{{ routeArticle.body || routeArticle.summary }}</div>
+            </article>
+            <article v-else-if="!isFunctionalListPage" class="detail-hero-card">
+              <figure v-if="routeDetail.image" class="detail-media">
+                <img :src="routeDetail.image" :alt="routeDetail.title" />
+                <figcaption v-if="routeDetail.imageCaption">{{ routeDetail.imageCaption }}</figcaption>
+              </figure>
               <div>
-                <span>{{ routeDetail.type }}</span>
+                <div class="detail-labels">
+                  <span>{{ routeDetail.type }}</span>
+                  <b v-if="routeDetail.isPinned" class="pin-badge">置顶</b>
+                </div>
                 <h1>{{ routeDetail.title }}</h1>
                 <p>{{ routeDetail.body }}</p>
                 <small>{{ routeDetail.meta }}</small>
@@ -1473,7 +1511,7 @@ async function publishPost() {
               <article v-for="post in posts.slice(0, 3)" :key="post.id" class="feed-item" :class="{ 'without-image': !post.image }">
                 <button v-if="post.image" class="feed-image" @click="openPost(post)"><img :src="post.image" :alt="post.title" /></button>
                 <div class="feed-copy">
-                  <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><span>{{ post.author }} · {{ post.time }}</span></div>
+                  <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><b v-if="post.is_pinned" class="pin-badge">置顶</b><span>{{ post.author }} · {{ post.time }}</span></div>
                   <button class="feed-title" @click="openPost(post)">{{ post.title }}</button>
                   <p>{{ post.body }}</p>
                 </div>
@@ -1493,13 +1531,14 @@ async function publishPost() {
               <img :src="articles[0].image || assets.hero" :alt="articles[0].title" />
               <div>
                 <span>{{ articles[0].category }}</span>
+                <b v-if="articles[0].is_pinned" class="pin-badge">置顶</b>
                 <h1>{{ articles[0].title }}</h1>
                 <p>{{ articles[0].summary }}</p>
               </div>
             </article>
             <div class="portal-news-list">
               <button v-for="article in articles.slice(1, 5)" :key="article.id" @click="goTo(`/articles/${article.id}`)">
-                <span>{{ article.category }}</span>
+                <span>{{ article.is_pinned ? '置顶 · ' : '' }}{{ article.category }}</span>
                 <strong>{{ article.title }}</strong>
                 <small>{{ article.author }} · {{ article.car || '综合' }}</small>
               </button>
@@ -1554,7 +1593,7 @@ async function publishPost() {
             <article v-for="post in filteredPosts" :key="post.id" class="feed-item" :class="{ 'without-image': !post.image }">
               <button v-if="post.image" class="feed-image" @click="openPost(post)"><img :src="post.image" :alt="post.title" /></button>
               <div class="feed-copy">
-                <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><span>{{ post.author }} · {{ post.time }}</span></div>
+                <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><b v-if="post.is_pinned" class="pin-badge">置顶</b><span>{{ post.author }} · {{ post.time }}</span></div>
                 <button class="feed-title" @click="openPost(post)">{{ post.title }}</button>
                 <p>{{ post.body }}</p>
                 <div class="feed-actions">
@@ -1649,7 +1688,7 @@ async function publishPost() {
           <section class="article-section">
             <article v-for="article in reviewArticles" :key="article.id" class="article-row" @click="goTo(`/articles/${article.id}`)">
               <img :src="article.image || assets.hero" :alt="article.title" />
-              <div><span>{{ article.category }}</span><h2>{{ article.title }}</h2><p>{{ article.summary }}</p><small>{{ article.author }} · {{ article.car || '综合' }}</small></div>
+              <div><span>{{ article.category }}</span><b v-if="article.is_pinned" class="pin-badge">置顶</b><h2>{{ article.title }}</h2><p>{{ article.summary }}</p><small>{{ article.author }} · {{ article.car || '综合' }}</small></div>
             </article>
             <p v-if="!reviewArticles.length" class="empty-note">暂无评测文章。</p>
           </section>
@@ -1678,7 +1717,7 @@ async function publishPost() {
             <article v-for="post in filteredPosts" :key="post.id" class="feed-item" :class="{ 'without-image': !post.image }">
               <button v-if="post.image" class="feed-image" @click="openPost(post)"><img :src="post.image" :alt="post.title" /></button>
               <div class="feed-copy">
-                <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><span>{{ post.author }} · {{ post.time }}</span></div>
+                <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><b v-if="post.is_pinned" class="pin-badge">置顶</b><span>{{ post.author }} · {{ post.time }}</span></div>
                 <button class="feed-title" @click="openPost(post)">{{ post.title }}</button>
                 <p>{{ post.body }}</p>
                 <div v-if="canManageCommunity()" class="admin-actions">
@@ -1833,6 +1872,7 @@ async function publishPost() {
           <img :src="draftImagePreview" alt="帖子图片预览" />
           <button class="icon-button" title="移除图片" @click="clearDraftImage"><X :size="18" /></button>
         </div>
+        <input v-if="draftImagePreview" v-model="draftImageCaption" class="composer-caption-input" maxlength="200" placeholder="添加图片说明（可选，最多200字）" />
         <section v-if="showSpecsPanel" class="composer-extra-panel">
           <div class="composer-extra-head">
             <strong>车辆参数</strong>
