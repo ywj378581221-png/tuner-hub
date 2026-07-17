@@ -37,6 +37,10 @@ DEBUG = os.environ.get('TUNERHUB_DEBUG', '1') == '1'
 
 ALLOWED_HOSTS = [host.strip() for host in os.environ.get('TUNERHUB_ALLOWED_HOSTS', '127.0.0.1,localhost,testserver').split(',') if host.strip()]
 CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in os.environ.get('TUNERHUB_CSRF_TRUSTED_ORIGINS', '').split(',') if origin.strip()]
+TUNERHUB_CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.environ.get(
+    'TUNERHUB_CORS_ALLOWED_ORIGINS',
+    'http://127.0.0.1:5173,http://localhost:5173,http://127.0.0.1:5174,http://localhost:5174',
+).split(',') if origin.strip()]
 SECURE_SSL_REDIRECT = os.environ.get('TUNERHUB_SECURE_SSL_REDIRECT', '0') == '1'
 SECURE_HSTS_SECONDS = int(os.environ.get('TUNERHUB_HSTS_SECONDS', '0'))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = SECURE_HSTS_SECONDS > 0

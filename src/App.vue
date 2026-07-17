@@ -1,5 +1,5 @@
 ﻿<script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   PhBell as Bell,
@@ -134,6 +134,10 @@ const draftTitle = ref("");
 const draft = ref("");
 const draftType = ref("改装进度");
 const draftCar = ref("");
+const draftImage = ref(null);
+const draftImagePreview = ref("");
+const postImageInput = ref(null);
+const publishingPost = ref(false);
 const garageForm = ref({ car_id: "", custom_name: "", year: "", color: "", mods: "" });
 const projectForm = ref({ vehicle_id: "", title: "", stage: "", content: "" });
 const carKeyword = ref("");
@@ -595,6 +599,45 @@ function openComposerForCar(car, path = "/create") {
   showComposer.value = true;
 }
 
+function choosePostImage() {
+  postImageInput.value?.click();
+}
+
+async function openPhotoComposer() {
+  goTo("/create/photos");
+  showComposer.value = true;
+  await nextTick();
+  choosePostImage();
+}
+
+function clearDraftImage() {
+  draftImage.value = null;
+  draftImagePreview.value = "";
+  if (postImageInput.value) postImageInput.value.value = "";
+}
+
+function handlePostImage(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (!["jpg", "jpeg", "png", "webp"].includes(extension)) {
+    clearDraftImage();
+    showToast("帖子图片仅支持 JPG、PNG 或 WebP");
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    clearDraftImage();
+    showToast("帖子图片不能超过 10MB");
+    return;
+  }
+  draftImage.value = file;
+  const reader = new FileReader();
+  reader.onload = () => {
+    draftImagePreview.value = String(reader.result || "");
+  };
+  reader.readAsDataURL(file);
+}
+
 function openAuth(mode = "login") {
   authMode.value = mode;
   authMessage.value = "";
@@ -866,26 +909,32 @@ async function publishPost() {
     authMessage.value = "请先登录再发布帖子";
     return;
   }
+  if (publishingPost.value) return;
 
+  publishingPost.value = true;
   try {
+    const formData = new FormData();
+    formData.append("title", draftTitle.value);
+    formData.append("body", draft.value);
+    formData.append("type", draftType.value);
+    formData.append("car", draftCar.value);
+    if (draftImage.value) formData.append("image", draftImage.value);
     const data = await apiFetch("/api/posts/create/", {
       method: "POST",
-      body: JSON.stringify({
-        title: draftTitle.value,
-        body: draft.value,
-        type: draftType.value,
-        car: draftCar.value,
-      }),
+      body: formData,
     });
     posts.value = [data.post, ...posts.value];
     showComposer.value = false;
     draftTitle.value = "";
     draft.value = "";
     draftCar.value = "";
+    clearDraftImage();
     showToast("帖子已发布");
     goTo(`/post/${data.post.id}`);
   } catch (error) {
     showToast(error.message);
+  } finally {
+    publishingPost.value = false;
   }
 }
 
@@ -1214,7 +1263,7 @@ async function publishPost() {
             <img :src="avatarSrc" alt="Tuner hub" />
             <button @click="goTo('/create'); showComposer = true">分享改装进度、施工记录或线下聚会信息</button>
             <div>
-              <button @click="goTo('/create/photos'); showComposer = true"><ImageIcon :size="18" />图片</button>
+              <button @click="openPhotoComposer"><ImageIcon :size="18" />图片</button>
               <button @click="goTo('/create/specs'); showComposer = true"><SlidersHorizontal :size="18" />参数</button>
               <button @click="goTo('/create/project-car'); showComposer = true"><Wrench :size="18" />项目车</button>
             </div>
@@ -1513,12 +1562,17 @@ async function publishPost() {
           <option v-for="car in enrichedCars" :key="car.name" :value="car.name">{{ car.name }}</option>
         </select>
         <textarea v-model="draft" placeholder="分享改装进度、零件清单、轮毂数据、施工记录或聚会信息"></textarea>
+        <input ref="postImageInput" class="composer-image-input" type="file" accept="image/jpeg,image/png,image/webp" @change="handlePostImage" />
+        <div v-if="draftImagePreview" class="composer-image-preview">
+          <img :src="draftImagePreview" alt="帖子图片预览" />
+          <button class="icon-button" title="移除图片" @click="clearDraftImage"><X :size="18" /></button>
+        </div>
         <div class="composer-tools">
-          <button @click="goTo('/create/photos')"><ImageIcon :size="18" />添加图片</button>
+          <button @click="choosePostImage"><ImageIcon :size="18" />{{ draftImage ? '更换图片' : '添加图片' }}</button>
           <button @click="goTo('/create/specs')"><Gauge :size="18" />添加参数</button>
           <button @click="goTo('/create/location')"><MapPin :size="18" />添加位置</button>
         </div>
-        <button class="post-button" @click="publishPost"><PaperPlaneTilt :size="18" />发布到 TH</button>
+        <button class="post-button" :disabled="publishingPost" @click="publishPost"><PaperPlaneTilt :size="18" />{{ publishingPost ? '发布中' : '发布到 TH' }}</button>
       </section>
     </div>
 

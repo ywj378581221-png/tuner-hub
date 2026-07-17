@@ -1,10 +1,13 @@
+import base64
 import json
+import tempfile
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
 from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -334,4 +337,197 @@ class UpdateEmailTests(TestCase):
         self.assertEqual(self.user.email, "new@example.com")
         self.assertEqual(response.json()["user"]["email"], "new@example.com")
 
-# Create your tests here.
+
+class CorsPolicyTests(TestCase):
+    def test_rejects_untrusted_origin(self):
+        response = self.client.options(
+            "/api/auth/email/",
+            HTTP_ORIGIN="https://evil.example",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("Access-Control-Allow-Origin", response)
+
+    def test_allows_same_origin(self):
+        response = self.client.options(
+            "/api/auth/email/",
+            HTTP_ORIGIN="http://testserver",
+        )
+
+        self.assertEqual(response["Access-Control-Allow-Origin"], "http://testserver")
+        self.assertEqual(response["Access-Control-Allow-Credentials"], "true")
+
+    @override_settings(TUNERHUB_CORS_ALLOWED_ORIGINS=["https://frontend.example"])
+    def test_allows_configured_frontend_origin(self):
+        response = self.client.options(
+            "/api/auth/email/",
+            HTTP_ORIGIN="https://frontend.example",
+        )
+
+        self.assertEqual(response["Access-Control-Allow-Origin"], "https://frontend.example")
+
+
+class LoginThrottleTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        self.user = get_user_model().objects.create_user(
+            username="throttle_owner",
+            password="CorrectPass2026!",
+        )
+
+    def test_blocks_after_five_failed_attempts(self):
+        for _ in range(5):
+            response = self.client.post(
+                "/api/auth/login/",
+                data=json.dumps({"username": "throttle_owner", "password": "wrong"}),
+                content_type="application/json",
+            )
+            self.assertEqual(response.status_code, 401)
+
+        blocked_response = self.client.post(
+            "/api/auth/login/",
+            data=json.dumps({"username": "throttle_owner", "password": "CorrectPass2026!"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(blocked_response.status_code, 429)
+
+    def test_successful_login_clears_failed_attempts(self):
+        for _ in range(2):
+            self.client.post(
+                "/api/auth/login/",
+                data=json.dumps({"username": "throttle_owner", "password": "wrong"}),
+                content_type="application/json",
+            )
+
+        response = self.client.post(
+            "/api/auth/login/",
+            data=json.dumps({"username": "throttle_owner", "password": "CorrectPass2026!"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+
+class AvatarUploadSecurityTests(TestCase):
+    valid_png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+    )
+
+    def setUp(self):
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.media_override = override_settings(MEDIA_ROOT=self.media_directory.name)
+        self.media_override.enable()
+        self.user = get_user_model().objects.create_user(
+            username="avatar_owner",
+            password="AvatarPass2026!",
+        )
+        self.client.force_login(self.user)
+
+    def tearDown(self):
+        self.media_override.disable()
+        self.media_directory.cleanup()
+
+    def test_accepts_valid_png(self):
+        avatar = SimpleUploadedFile("avatar.png", self.valid_png, content_type="image/png")
+
+        response = self.client.post("/api/auth/avatar/", {"avatar": avatar})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["user"]["avatar"].endswith(".png"))
+
+    def test_rejects_disguised_non_image(self):
+        avatar = SimpleUploadedFile("avatar.png", b"<html>not an image</html>", content_type="image/png")
+
+        response = self.client.post("/api/auth/avatar/", {"avatar": avatar})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "头像文件已损坏或不是有效图片")
+
+    def test_rejects_oversized_file(self):
+        avatar = SimpleUploadedFile(
+            "avatar.png",
+            b"x" * (5 * 1024 * 1024 + 1),
+            content_type="image/png",
+        )
+
+        response = self.client.post("/api/auth/avatar/", {"avatar": avatar})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "头像不能超过 5MB")
+
+
+class PostImageUploadTests(TestCase):
+    def setUp(self):
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.media_override = override_settings(MEDIA_ROOT=self.media_directory.name)
+        self.media_override.enable()
+        self.user = get_user_model().objects.create_user(
+            username="post_owner",
+            password="PostOwnerPass2026!",
+            first_name="帖子车主",
+        )
+        self.client.force_login(self.user)
+
+    def tearDown(self):
+        self.media_override.disable()
+        self.media_directory.cleanup()
+
+    def test_creates_post_with_uploaded_image(self):
+        image = SimpleUploadedFile(
+            "m2c.png",
+            AvatarUploadSecurityTests.valid_png,
+            content_type="image/png",
+        )
+
+        response = self.client.post(
+            "/api/posts/create/",
+            {
+                "title": "M2C 改装记录",
+                "body": "更换轮毂与刹车后的驾驶感受。",
+                "type": "改装进度",
+                "car": "",
+                "image": image,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        post = Post.objects.get()
+        self.assertTrue(post.image_upload.name.startswith("posts/"))
+        self.assertTrue(response.json()["post"]["image"].startswith("/media/posts/"))
+
+    def test_rejects_disguised_post_image(self):
+        image = SimpleUploadedFile(
+            "fake.png",
+            b"<script>alert('not an image')</script>",
+            content_type="image/png",
+        )
+
+        response = self.client.post(
+            "/api/posts/create/",
+            {
+                "title": "无效图片",
+                "body": "这条内容不应保存。",
+                "type": "改装进度",
+                "image": image,
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "帖子图片文件已损坏或不是有效图片")
+        self.assertEqual(Post.objects.count(), 0)
+
+    def test_keeps_json_post_creation_compatible(self):
+        response = self.client.post(
+            "/api/posts/create/",
+            data=json.dumps({
+                "title": "纯文字记录",
+                "body": "没有图片也可以正常发布。",
+                "type": "改装进度",
+                "car": "",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(Post.objects.count(), 1)

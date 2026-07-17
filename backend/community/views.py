@@ -1,5 +1,10 @@
 import json
 import hashlib
+import warnings
+from pathlib import Path
+from urllib.parse import urlsplit
+
+from PIL import Image, UnidentifiedImageError
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model, login, logout, update_session_auth_hash
 from django.contrib.auth.password_validation import validate_password
@@ -12,6 +17,7 @@ from django.contrib.sessions.models import Session
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils.cache import patch_vary_headers
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
@@ -20,11 +26,19 @@ from .models import Article, Car, CarTrim, Club, Event, Guide, MarketItem, Post,
 
 def with_cors(response, request=None):
     origin = request.headers.get("Origin") if request else None
-    response["Access-Control-Allow-Origin"] = origin or "*"
-    response["Access-Control-Allow-Credentials"] = "true"
-    response["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
-    response["Access-Control-Allow-Headers"] = "Content-Type"
-    response["Vary"] = "Origin"
+    if origin and request:
+        parsed_origin = urlsplit(origin)
+        same_origin = (
+            parsed_origin.scheme == request.scheme
+            and parsed_origin.netloc == request.get_host()
+        )
+        allowed_origin = same_origin or origin in settings.TUNERHUB_CORS_ALLOWED_ORIGINS
+        patch_vary_headers(response, ["Origin"])
+        if allowed_origin:
+            response["Access-Control-Allow-Origin"] = origin
+            response["Access-Control-Allow-Credentials"] = "true"
+            response["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+            response["Access-Control-Allow-Headers"] = "Content-Type"
     return response
 
 
@@ -36,6 +50,36 @@ def read_json(request):
     if not request.body:
       return {}
     return json.loads(request.body.decode("utf-8"))
+
+
+def request_client_ip(request):
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if forwarded_for:
+        return forwarded_for.split(",", 1)[0].strip()
+    return request.META.get("HTTP_X_REAL_IP") or request.META.get("REMOTE_ADDR", "")
+
+
+def validate_uploaded_image(upload, label="图片", max_size_mb=10):
+    if upload.size > max_size_mb * 1024 * 1024:
+        return f"{label}不能超过 {max_size_mb}MB"
+    if upload.content_type and not upload.content_type.startswith("image/"):
+        return f"{label}必须是图片文件"
+    if Path(upload.name).suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}:
+        return f"{label}仅支持 JPG、PNG 或 WebP"
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(upload) as image:
+                image.verify()
+                image_format = (image.format or "").upper()
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombWarning, Image.DecompressionBombError):
+        return f"{label}文件已损坏或不是有效图片"
+    finally:
+        upload.seek(0)
+    if image_format not in {"JPEG", "PNG", "WEBP"}:
+        return f"{label}仅支持 JPG、PNG 或 WebP"
+    return None
 
 
 def profile_for(user):
@@ -483,8 +527,17 @@ def login_user(request):
 
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
+    throttle_digest = hashlib.sha256(
+        f"{request_client_ip(request)}:{username.lower()}".encode("utf-8")
+    ).hexdigest()
+    throttle_key = f"login-failures:{throttle_digest}"
+    failures = int(cache.get(throttle_key, 0))
+    if failures >= 5:
+        return with_cors(JsonResponse({"error": "登录尝试次数过多，请 15 分钟后再试"}, status=429), request)
+
     user = authenticate(request, username=username, password=password)
     if not user:
+        cache.set(throttle_key, failures + 1, 900)
         User = get_user_model()
         banned_user = User.objects.filter(username=username).first()
         if banned_user:
@@ -496,6 +549,7 @@ def login_user(request):
     if profile.is_banned or not user.is_active:
         return ban_response(request, profile)
 
+    cache.delete(throttle_key)
     login(request, user)
     clear_other_user_sessions(user, request.session.session_key)
     return with_cors(JsonResponse({"user": user_payload(user)}, json_dumps_params={"ensure_ascii": False}), request)
@@ -635,7 +689,7 @@ def request_password_reset(request):
     if not email:
         return with_cors(JsonResponse({"error": "请输入注册邮箱"}, status=400), request)
 
-    client_ip = request.META.get("REMOTE_ADDR", "")
+    client_ip = request_client_ip(request)
     throttle_digest = hashlib.sha256(f"{client_ip}:{email}".encode("utf-8")).hexdigest()
     throttle_key = f"password-reset:{throttle_digest}"
     generic_message = "如果该邮箱已注册，重置链接会发送到邮箱"
@@ -722,15 +776,19 @@ def upload_avatar(request):
     avatar = request.FILES.get("avatar")
     if not avatar:
         return with_cors(JsonResponse({"error": "请选择头像图片"}, status=400), request)
-    if avatar.content_type and not avatar.content_type.startswith("image/"):
-        return with_cors(JsonResponse({"error": "头像必须是图片文件"}, status=400), request)
+    image_error = validate_uploaded_image(avatar, label="头像", max_size_mb=5)
+    if image_error:
+        return with_cors(JsonResponse({"error": image_error}, status=400), request)
 
     profile, _ = UserProfile.objects.get_or_create(
         user=request.user,
         defaults={"nickname": request.user.first_name or request.user.username},
     )
+    old_avatar_name = profile.avatar.name if profile.avatar else ""
     profile.avatar = avatar
     profile.save(update_fields=["avatar", "updated_at"])
+    if old_avatar_name and old_avatar_name != profile.avatar.name:
+        profile.avatar.storage.delete(old_avatar_name)
     return with_cors(JsonResponse({"user": user_payload(request.user)}, json_dumps_params={"ensure_ascii": False}), request)
 
 
@@ -821,10 +879,13 @@ def create_post(request):
     if blocked:
         return blocked
 
-    try:
-        data = read_json(request)
-    except json.JSONDecodeError:
-        return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+    if request.content_type and request.content_type.startswith("multipart/form-data"):
+        data = request.POST
+    else:
+        try:
+            data = read_json(request)
+        except json.JSONDecodeError:
+            return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
 
     title = (data.get("title") or "").strip()
     body = (data.get("body") or "").strip()
@@ -832,6 +893,12 @@ def create_post(request):
     car_value = (data.get("car") or "").strip()
     if not title or not body:
         return with_cors(JsonResponse({"error": "标题和正文不能为空"}, status=400), request)
+
+    post_image = request.FILES.get("image")
+    if post_image:
+        image_error = validate_uploaded_image(post_image, label="帖子图片", max_size_mb=10)
+        if image_error:
+            return with_cors(JsonResponse({"error": image_error}, status=400), request)
 
     tone_map = {"改装进度": "blue", "聚会": "purple", "店家施工": "green", "二手市场": "orange"}
     car = None
@@ -842,7 +909,8 @@ def create_post(request):
         body=body,
         post_type=post_type if post_type in tone_map else "改装进度",
         tone=tone_map.get(post_type, "blue"),
-        image=data.get("image") or "/assets/supra-garage.png",
+        image="" if post_image else (data.get("image") or "/assets/supra-garage.png"),
+        image_upload=post_image,
         author=request.user.first_name or request.user.username,
         time_label="刚刚",
         car=car,
