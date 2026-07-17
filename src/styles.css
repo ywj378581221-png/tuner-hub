@@ -2154,6 +2154,65 @@ button {
   color: #111;
 }
 
+.composer-extra-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.composer-extra-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.composer-extra-head strong {
+  font-size: 14px;
+}
+
+.composer-spec-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr) 36px;
+  gap: 8px;
+}
+
+.composer-spec-row input,
+.composer-location-row input {
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  outline: 0;
+}
+
+.composer-spec-row input:focus,
+.composer-location-row input:focus {
+  border-color: #111;
+}
+
+.composer-add-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: fit-content;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: white;
+}
+
+.composer-location-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+}
+
 .composer-tools {
   display: flex;
   gap: 8px;
@@ -2169,6 +2228,12 @@ button {
   border: 1px solid var(--line);
   border-radius: 5px;
   background: white;
+}
+
+.composer-tools button.active {
+  border-color: #111;
+  background: #111;
+  color: white;
 }
 
 .post-button {

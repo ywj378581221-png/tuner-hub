@@ -128,7 +128,7 @@ class PostAdmin(ImageUploadAdminMixin, admin.ModelAdmin):
     list_filter = ("post_type", "featured", "state", "created_at")
     search_fields = ("title", "body", "author")
     list_editable = ("featured", "state")
-    fields = ("title", "body", "post_type", "tone", "image_upload", "image_preview", "image", "author", "time_label", "car", "club", "shop", "likes", "comments", "progress", "specs", "featured", "state")
+    fields = ("title", "body", "post_type", "tone", "image_upload", "image_preview", "image", "author", "time_label", "car", "club", "shop", "location", "likes", "comments", "progress", "specs", "featured", "state")
 
 
 @admin.register(Car)

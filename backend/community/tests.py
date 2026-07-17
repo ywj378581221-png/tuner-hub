@@ -487,6 +487,8 @@ class PostImageUploadTests(TestCase):
                 "body": "更换轮毂与刹车后的驾驶感受。",
                 "type": "改装进度",
                 "car": "",
+                "specs": json.dumps(["轮毂: 18x9.5J", "动力: 450 hp"]),
+                "location": "上海国际赛车场",
                 "image": image,
             },
         )
@@ -494,7 +496,10 @@ class PostImageUploadTests(TestCase):
         self.assertEqual(response.status_code, 200)
         post = Post.objects.get()
         self.assertTrue(post.image_upload.name.startswith("posts/"))
+        self.assertEqual(post.specs, ["轮毂: 18x9.5J", "动力: 450 hp"])
+        self.assertEqual(post.location, "上海国际赛车场")
         self.assertTrue(response.json()["post"]["image"].startswith("/media/posts/"))
+        self.assertEqual(response.json()["post"]["location"], "上海国际赛车场")
 
     def test_rejects_disguised_post_image(self):
         image = SimpleUploadedFile(
@@ -531,3 +536,18 @@ class PostImageUploadTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Post.objects.count(), 1)
+
+    def test_rejects_more_than_eight_specs(self):
+        response = self.client.post(
+            "/api/posts/create/",
+            {
+                "title": "参数数量测试",
+                "body": "参数数量超过限制时不应保存帖子。",
+                "type": "改装进度",
+                "specs": json.dumps([f"参数 {index}" for index in range(9)]),
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "最多添加 8 项参数")
+        self.assertEqual(Post.objects.count(), 0)

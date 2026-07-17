@@ -82,6 +82,32 @@ def validate_uploaded_image(upload, label="图片", max_size_mb=10):
     return None
 
 
+def normalize_post_specs(raw_specs):
+    if raw_specs in (None, ""):
+        return []
+    if isinstance(raw_specs, str):
+        try:
+            raw_specs = json.loads(raw_specs)
+        except json.JSONDecodeError as error:
+            raise ValueError("参数格式不正确") from error
+    if not isinstance(raw_specs, list):
+        raise ValueError("参数格式不正确")
+    if len(raw_specs) > 8:
+        raise ValueError("最多添加 8 项参数")
+
+    specs = []
+    for raw_spec in raw_specs:
+        if not isinstance(raw_spec, str):
+            raise ValueError("参数格式不正确")
+        text = raw_spec.strip()
+        if not text:
+            continue
+        if len(text) > 120:
+            raise ValueError("单项参数不能超过 120 个字符")
+        specs.append(text)
+    return specs
+
+
 def profile_for(user):
     profile, _ = UserProfile.objects.get_or_create(
         user=user,
@@ -305,6 +331,7 @@ def post_payload(post):
         "comments": post.comments,
         "progress": post.progress,
         "specs": post.specs,
+        "location": post.location,
         "featured": post.featured,
     }
 
@@ -891,8 +918,18 @@ def create_post(request):
     body = (data.get("body") or "").strip()
     post_type = (data.get("type") or "改装进度").strip()
     car_value = (data.get("car") or "").strip()
+    location = (data.get("location") or "").strip()
     if not title or not body:
         return with_cors(JsonResponse({"error": "标题和正文不能为空"}, status=400), request)
+    if len(title) > 180:
+        return with_cors(JsonResponse({"error": "标题不能超过 180 个字符"}, status=400), request)
+    if len(location) > 120:
+        return with_cors(JsonResponse({"error": "位置不能超过 120 个字符"}, status=400), request)
+
+    try:
+        specs = normalize_post_specs(data.get("specs"))
+    except ValueError as error:
+        return with_cors(JsonResponse({"error": str(error)}, status=400), request)
 
     post_image = request.FILES.get("image")
     if post_image:
@@ -914,10 +951,11 @@ def create_post(request):
         author=request.user.first_name or request.user.username,
         time_label="刚刚",
         car=car,
+        location=location,
         likes=0,
         comments=0,
         progress=0,
-        specs=[],
+        specs=specs,
         state=PublishState.PUBLISHED,
     )
     record_active_action(request.user)

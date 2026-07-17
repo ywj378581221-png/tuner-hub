@@ -138,6 +138,11 @@ const draftImage = ref(null);
 const draftImagePreview = ref("");
 const postImageInput = ref(null);
 const publishingPost = ref(false);
+const showSpecsPanel = ref(false);
+const showLocationPanel = ref(false);
+const draftSpecs = ref([{ label: "", value: "" }]);
+const draftLocation = ref("");
+const locationInput = ref(null);
 const garageForm = ref({ car_id: "", custom_name: "", year: "", color: "", mods: "" });
 const projectForm = ref({ vehicle_id: "", title: "", stage: "", content: "" });
 const carKeyword = ref("");
@@ -283,7 +288,8 @@ const routeDetail = computed(() => {
         ["点赞", post.likes],
         ["评论", post.comments],
         ["进度", `${post.progress}%`],
-        ...post.specs.map((spec) => ["配置", spec]),
+        ...(post.location ? [["位置", post.location]] : []),
+        ...(post.specs || []).map((spec) => ["配置", spec]),
       ],
     };
   }
@@ -593,10 +599,15 @@ function openPost(post) {
   goTo(`/post/${post.id}`);
 }
 
-function openComposerForCar(car, path = "/create") {
+async function openComposerForCar(car, path = "/create") {
   draftCar.value = car?.name || "";
   goTo(path);
   showComposer.value = true;
+  if (path === "/create/specs") showSpecsPanel.value = true;
+  if (path === "/create/location") showLocationPanel.value = true;
+  await nextTick();
+  if (path === "/create/photos") choosePostImage();
+  if (path === "/create/location") locationInput.value?.focus();
 }
 
 function choosePostImage() {
@@ -604,10 +615,41 @@ function choosePostImage() {
 }
 
 async function openPhotoComposer() {
-  goTo("/create/photos");
-  showComposer.value = true;
+  await openComposerForCar(null, "/create/photos");
+}
+
+async function openSpecsComposer(car = null) {
+  await openComposerForCar(car, "/create/specs");
+}
+
+function addDraftSpec() {
+  if (draftSpecs.value.length >= 8) {
+    showToast("最多添加 8 项参数");
+    return;
+  }
+  draftSpecs.value.push({ label: "", value: "" });
+}
+
+function removeDraftSpec(index) {
+  draftSpecs.value.splice(index, 1);
+  if (!draftSpecs.value.length) draftSpecs.value.push({ label: "", value: "" });
+}
+
+function clearPostExtras() {
+  showSpecsPanel.value = false;
+  showLocationPanel.value = false;
+  draftSpecs.value = [{ label: "", value: "" }];
+  draftLocation.value = "";
+}
+
+function revealSpecsPanel() {
+  showSpecsPanel.value = true;
+}
+
+async function revealLocationPanel() {
+  showLocationPanel.value = true;
   await nextTick();
-  choosePostImage();
+  locationInput.value?.focus();
 }
 
 function clearDraftImage() {
@@ -918,6 +960,11 @@ async function publishPost() {
     formData.append("body", draft.value);
     formData.append("type", draftType.value);
     formData.append("car", draftCar.value);
+    const specs = draftSpecs.value
+      .map((spec) => [spec.label.trim(), spec.value.trim()].filter(Boolean).join(": "))
+      .filter(Boolean);
+    formData.append("specs", JSON.stringify(specs));
+    formData.append("location", draftLocation.value.trim());
     if (draftImage.value) formData.append("image", draftImage.value);
     const data = await apiFetch("/api/posts/create/", {
       method: "POST",
@@ -929,6 +976,7 @@ async function publishPost() {
     draft.value = "";
     draftCar.value = "";
     clearDraftImage();
+    clearPostExtras();
     showToast("帖子已发布");
     goTo(`/post/${data.post.id}`);
   } catch (error) {
@@ -1012,7 +1060,7 @@ async function publishPost() {
               <button @click="openComposerForCar(routeCar)">发布 {{ routeCar.name }} 相关动态</button>
               <div>
                 <button @click="openComposerForCar(routeCar, '/create/photos')"><ImageIcon :size="18" />图片</button>
-                <button @click="openComposerForCar(routeCar, '/create/specs')"><SlidersHorizontal :size="18" />参数</button>
+                <button @click="openSpecsComposer(routeCar)"><SlidersHorizontal :size="18" />参数</button>
                 <button @click="openComposerForCar(routeCar, '/create/project-car')"><Wrench :size="18" />项目车</button>
               </div>
             </section>
@@ -1264,7 +1312,7 @@ async function publishPost() {
             <button @click="goTo('/create'); showComposer = true">分享改装进度、施工记录或线下聚会信息</button>
             <div>
               <button @click="openPhotoComposer"><ImageIcon :size="18" />图片</button>
-              <button @click="goTo('/create/specs'); showComposer = true"><SlidersHorizontal :size="18" />参数</button>
+              <button @click="openSpecsComposer()"><SlidersHorizontal :size="18" />参数</button>
               <button @click="goTo('/create/project-car'); showComposer = true"><Wrench :size="18" />项目车</button>
             </div>
           </section>
@@ -1537,7 +1585,8 @@ async function publishPost() {
           <span><b>车辆</b>{{ drawerPost.car }}</span>
           <span><b>点赞</b>{{ drawerPost.likes }}</span>
           <span><b>评论</b>{{ drawerPost.comments }}</span>
-          <span v-for="spec in drawerPost.specs" :key="spec"><b>配置</b>{{ spec }}</span>
+          <span v-if="drawerPost.location"><b>位置</b>{{ drawerPost.location }}</span>
+          <span v-for="spec in (drawerPost.specs || [])" :key="spec"><b>配置</b>{{ spec }}</span>
         </div>
         <div class="drawer-actions">
           <button @click="toggleSave(drawerPost.id); goTo('/saved')"><BookmarkSimple :size="18" />{{ saved.has(drawerPost.id) ? '已收藏' : '收藏' }}</button>
@@ -1567,10 +1616,32 @@ async function publishPost() {
           <img :src="draftImagePreview" alt="帖子图片预览" />
           <button class="icon-button" title="移除图片" @click="clearDraftImage"><X :size="18" /></button>
         </div>
+        <section v-if="showSpecsPanel" class="composer-extra-panel">
+          <div class="composer-extra-head">
+            <strong>车辆参数</strong>
+            <button class="icon-button" title="收起参数" @click="showSpecsPanel = false"><X :size="17" /></button>
+          </div>
+          <div v-for="(spec, index) in draftSpecs" :key="index" class="composer-spec-row">
+            <input v-model="spec.label" maxlength="38" placeholder="参数名称，如轮毂" />
+            <input v-model="spec.value" maxlength="80" placeholder="数值，如18×9.5J" />
+            <button class="icon-button" title="删除此参数" @click="removeDraftSpec(index)"><X :size="17" /></button>
+          </div>
+          <button class="composer-add-row" @click="addDraftSpec"><Plus :size="17" />继续添加</button>
+        </section>
+        <section v-if="showLocationPanel" class="composer-extra-panel">
+          <div class="composer-extra-head">
+            <strong>所在位置</strong>
+            <button class="icon-button" title="移除位置" @click="showLocationPanel = false; draftLocation = ''"><X :size="17" /></button>
+          </div>
+          <div class="composer-location-row">
+            <MapPin :size="19" />
+            <input ref="locationInput" v-model="draftLocation" maxlength="120" placeholder="城市或地点，如上海国际赛车场" />
+          </div>
+        </section>
         <div class="composer-tools">
           <button @click="choosePostImage"><ImageIcon :size="18" />{{ draftImage ? '更换图片' : '添加图片' }}</button>
-          <button @click="goTo('/create/specs')"><Gauge :size="18" />添加参数</button>
-          <button @click="goTo('/create/location')"><MapPin :size="18" />添加位置</button>
+          <button :class="{ active: showSpecsPanel }" @click="revealSpecsPanel"><Gauge :size="18" />添加参数</button>
+          <button :class="{ active: showLocationPanel }" @click="revealLocationPanel"><MapPin :size="18" />添加位置</button>
         </div>
         <button class="post-button" :disabled="publishingPost" @click="publishPost"><PaperPlaneTilt :size="18" />{{ publishingPost ? '发布中' : '发布到 TH' }}</button>
       </section>

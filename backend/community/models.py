@@ -216,6 +216,7 @@ class Post(TimeStampedModel):
     comments = models.PositiveIntegerField("评论数", default=0)
     progress = models.PositiveIntegerField("项目进度", default=0)
     specs = models.JSONField("配置参数", default=list, blank=True)
+    location = models.CharField("位置", max_length=120, blank=True)
     featured = models.BooleanField("首页精选", default=False)
     state = models.CharField("发布状态", max_length=20, choices=PublishState.choices, default=PublishState.PUBLISHED)
 
