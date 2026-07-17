@@ -1,6 +1,7 @@
 import json
 import hashlib
 import warnings
+from uuid import uuid4
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -15,15 +16,16 @@ from django.core.mail import send_mail
 from django.core.validators import validate_email
 from django.contrib.sessions.models import Session
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils.text import slugify
 from django.utils.cache import patch_vary_headers
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
-from .models import Article, Car, CarTrim, Club, Event, Guide, MarketItem, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, PublishState, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
+from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, Car, CarTrim, Club, Event, Guide, MarketItem, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, PublishState, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
 
 
 def with_cors(response, request=None):
@@ -376,7 +378,25 @@ def comment_payload(comment):
     }
 
 
-def article_payload(article):
+def article_block_payload(block):
+    return {
+        "id": block.id,
+        "type": block.block_type,
+        "position": block.position,
+        "text": block.text,
+        "image": content_image_url(block),
+        "caption": block.caption,
+    }
+
+
+def article_payload(article, saved_ids=None, liked_ids=None):
+    blocks = list(article.blocks.all())
+    stored_cover_image = content_image_url(article)
+    cover_image = stored_cover_image
+    if not cover_image:
+        first_image = next((block for block in blocks if block.block_type == "image" and block.image_upload), None)
+        cover_image = content_image_url(first_image) if first_image else ""
+    owner_profile = profile_for(article.owner) if article.owner else None
     return {
         "id": article.id,
         "title": article.title,
@@ -384,12 +404,23 @@ def article_payload(article):
         "category": article.category,
         "summary": article.summary,
         "body": article.body,
-        "image": content_image_url(article),
+        "image": cover_image,
+        "has_cover": bool(stored_cover_image),
         "image_caption": article.image_caption,
-        "author": article.author,
+        "author": article.author or (owner_profile.nickname if owner_profile else ""),
+        "owner_id": article.owner_id,
+        "author_avatar": owner_profile.avatar.url if owner_profile and owner_profile.avatar else "",
         "car": article.car.name if article.car else "",
+        "created_at": article.created_at.isoformat(),
+        "time": relative_time_label(article.created_at),
+        "views": article.views,
+        "likes": article.likes,
+        "comments": article.comments,
+        "is_saved": bool(saved_ids is not None and article.id in saved_ids),
+        "is_liked": bool(liked_ids is not None and article.id in liked_ids),
         "featured": article.featured,
         "is_pinned": article.is_pinned,
+        "blocks": [article_block_payload(block) for block in blocks],
     }
 
 
@@ -429,11 +460,20 @@ def site_data(request):
         record_visit(request.user)
     User = get_user_model()
     visible_posts = list(public_queryset(Post).select_related("car", "club", "shop", "owner"))
+    visible_articles = list(
+        public_queryset(Article)
+        .select_related("car", "owner", "owner__profile")
+        .prefetch_related("blocks")
+    )
     saved_ids = set()
     liked_ids = set()
+    saved_article_ids = set()
+    liked_article_ids = set()
     if request.user.is_authenticated:
         saved_ids = set(PostSave.objects.filter(user=request.user, post__in=visible_posts).values_list("post_id", flat=True))
         liked_ids = set(PostLike.objects.filter(user=request.user, post__in=visible_posts).values_list("post_id", flat=True))
+        saved_article_ids = set(ArticleSave.objects.filter(user=request.user, article__in=visible_articles).values_list("article_id", flat=True))
+        liked_article_ids = set(ArticleLike.objects.filter(user=request.user, article__in=visible_articles).values_list("article_id", flat=True))
     data = {
         "posts": [post_payload(post, saved_ids, liked_ids) for post in visible_posts],
         "cars": [car_payload(item) for item in public_queryset(Car).prefetch_related("trims")],
@@ -456,7 +496,7 @@ def site_data(request):
             {"id": item.id, "title": item.title, "body": item.body}
             for item in public_queryset(Guide)
         ],
-        "articles": [article_payload(item) for item in public_queryset(Article).select_related("car")],
+        "articles": [article_payload(item, saved_article_ids, liked_article_ids) for item in visible_articles],
         "users": [
             public_user_payload(item, request.user)
             for item in User.objects.filter(is_active=True).order_by("-date_joined")[:24]
@@ -991,6 +1031,282 @@ def send_private_message(request, user_id):
 
     message = PrivateMessage.objects.create(sender=request.user, receiver=receiver, body=body)
     return with_cors(JsonResponse({"message": message_payload(message)}, json_dumps_params={"ensure_ascii": False}), request)
+
+
+def normalize_article_blocks(raw_blocks, files):
+    if isinstance(raw_blocks, str):
+        try:
+            raw_blocks = json.loads(raw_blocks)
+        except json.JSONDecodeError as error:
+            raise ValueError("文章内容格式不正确") from error
+    if not isinstance(raw_blocks, list) or not raw_blocks:
+        raise ValueError("请添加文章正文")
+    if len(raw_blocks) > 40:
+        raise ValueError("文章最多添加 40 个内容段落")
+
+    blocks = []
+    text_length = 0
+    image_count = 0
+    for raw_block in raw_blocks:
+        if not isinstance(raw_block, dict):
+            raise ValueError("文章内容格式不正确")
+        block_type = raw_block.get("type")
+        if block_type not in {"paragraph", "heading", "image"}:
+            raise ValueError("文章中包含不支持的内容类型")
+        text = str(raw_block.get("text") or "").strip()
+        caption = str(raw_block.get("caption") or "").strip()
+        if len(caption) > 200:
+            raise ValueError("单张图片说明不能超过 200 个字符")
+
+        upload = None
+        if block_type == "image":
+            image_count += 1
+            if image_count > 20:
+                raise ValueError("文章最多添加 20 张正文图片")
+            image_key = str(raw_block.get("image_key") or "")
+            upload = files.get(image_key)
+            if not upload:
+                raise ValueError("正文图片未成功选择，请重新添加")
+            image_error = validate_uploaded_image(upload, label="正文图片", max_size_mb=10)
+            if image_error:
+                raise ValueError(image_error)
+        else:
+            if not text:
+                continue
+            limit = 120 if block_type == "heading" else 10000
+            if len(text) > limit:
+                label = "小标题" if block_type == "heading" else "正文段落"
+                raise ValueError(f"{label}内容过长")
+            text_length += len(text)
+
+        blocks.append({"type": block_type, "text": text, "caption": caption, "upload": upload})
+
+    if not blocks or text_length == 0:
+        raise ValueError("文章至少需要一段文字内容")
+    if text_length > 50000:
+        raise ValueError("文章正文不能超过 50000 个字符")
+    return blocks
+
+
+def article_payload_for_viewer(article, user):
+    saved_ids = {article.id} if user.is_authenticated and ArticleSave.objects.filter(user=user, article=article).exists() else set()
+    liked_ids = {article.id} if user.is_authenticated and ArticleLike.objects.filter(user=user, article=article).exists() else set()
+    return article_payload(article, saved_ids, liked_ids)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def create_article(request):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再发布文章"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+
+    data = request.POST if request.content_type and request.content_type.startswith("multipart/form-data") else None
+    if data is None:
+        try:
+            data = read_json(request)
+        except json.JSONDecodeError:
+            return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+
+    title = (data.get("title") or "").strip()
+    summary = (data.get("summary") or "").strip()
+    category = (data.get("category") or "车主故事").strip()
+    car_value = (data.get("car") or "").strip()
+    cover_caption = (data.get("image_caption") or "").strip()
+    if not title:
+        return with_cors(JsonResponse({"error": "请输入文章标题"}, status=400), request)
+    if len(title) > 180:
+        return with_cors(JsonResponse({"error": "文章标题不能超过 180 个字符"}, status=400), request)
+    if len(summary) > 500:
+        return with_cors(JsonResponse({"error": "文章摘要不能超过 500 个字符"}, status=400), request)
+    if len(cover_caption) > 200:
+        return with_cors(JsonResponse({"error": "封面说明不能超过 200 个字符"}, status=400), request)
+    valid_categories = {choice[0] for choice in Article.CATEGORY_CHOICES}
+    if category not in valid_categories:
+        return with_cors(JsonResponse({"error": "文章栏目不正确"}, status=400), request)
+
+    cover_image = request.FILES.get("cover_image")
+    if cover_caption and not cover_image:
+        return with_cors(JsonResponse({"error": "添加封面后才能填写封面说明"}, status=400), request)
+    if cover_image:
+        image_error = validate_uploaded_image(cover_image, label="文章封面", max_size_mb=10)
+        if image_error:
+            return with_cors(JsonResponse({"error": image_error}, status=400), request)
+
+    try:
+        blocks = normalize_article_blocks(data.get("blocks"), request.FILES)
+    except ValueError as error:
+        return with_cors(JsonResponse({"error": str(error)}, status=400), request)
+
+    body_parts = []
+    for block in blocks:
+        if block["type"] == "heading":
+            body_parts.append(f"## {block['text']}")
+        elif block["type"] == "paragraph":
+            body_parts.append(block["text"])
+    body = "\n\n".join(body_parts)
+    if not summary:
+        summary = next((block["text"][:240] for block in blocks if block["type"] == "paragraph"), "")
+    car = None
+    if car_value:
+        car = Car.objects.filter(name=car_value).first() or Car.objects.filter(slug=car_value).first()
+    slug_base = slugify(title, allow_unicode=True)[:150] or "article"
+    article_slug = f"{slug_base}-{uuid4().hex[:10]}"
+
+    with transaction.atomic():
+        article = Article.objects.create(
+            title=title,
+            slug=article_slug,
+            category=category,
+            summary=summary,
+            body=body,
+            image_upload=cover_image,
+            image_caption=cover_caption,
+            owner=request.user,
+            author=profile_for(request.user).nickname or request.user.first_name or request.user.username,
+            car=car,
+            state=PublishState.PUBLISHED,
+        )
+        for position, block in enumerate(blocks):
+            ArticleBlock.objects.create(
+                article=article,
+                block_type=block["type"],
+                position=position,
+                text=block["text"],
+                image_upload=block["upload"],
+                caption=block["caption"],
+            )
+
+    record_active_action(request.user)
+    article = Article.objects.select_related("car", "owner", "owner__profile").prefetch_related("blocks").get(id=article.id)
+    return with_cors(JsonResponse({"article": article_payload_for_viewer(article, request.user)}, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "OPTIONS"])
+def article_detail(request, article_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    try:
+        article = public_queryset(Article).select_related("car", "owner", "owner__profile").prefetch_related("blocks").get(id=article_id)
+    except Article.DoesNotExist:
+        return with_cors(JsonResponse({"error": "文章不存在"}, status=404), request)
+    Article.objects.filter(id=article.id).update(views=F("views") + 1)
+    article.refresh_from_db(fields=["views"])
+    comments = ArticleComment.objects.filter(article=article).select_related("user", "user__profile")[:100]
+    return with_cors(JsonResponse({
+        "article": article_payload_for_viewer(article, request.user),
+        "comments": [comment_payload(comment) for comment in comments],
+    }, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def toggle_article_save(request, article_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再收藏文章"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    try:
+        article = public_queryset(Article).prefetch_related("blocks").get(id=article_id)
+    except Article.DoesNotExist:
+        return with_cors(JsonResponse({"error": "文章不存在"}, status=404), request)
+    relation, created = ArticleSave.objects.get_or_create(user=request.user, article=article)
+    if not created:
+        relation.delete()
+    return with_cors(JsonResponse({"saved": created, "article": article_payload_for_viewer(article, request.user)}, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def toggle_article_like(request, article_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再点赞"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    with transaction.atomic():
+        try:
+            article = public_queryset(Article).select_for_update().prefetch_related("blocks").get(id=article_id)
+        except Article.DoesNotExist:
+            return with_cors(JsonResponse({"error": "文章不存在"}, status=404), request)
+        relation, created = ArticleLike.objects.get_or_create(user=request.user, article=article)
+        if not created:
+            relation.delete()
+        article.likes = ArticleLike.objects.filter(article=article).count()
+        article.save(update_fields=["likes", "updated_at"])
+    record_active_action(request.user)
+    return with_cors(JsonResponse({"liked": created, "article": article_payload_for_viewer(article, request.user)}, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST", "OPTIONS"])
+def article_comments(request, article_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    try:
+        article = public_queryset(Article).prefetch_related("blocks").get(id=article_id)
+    except Article.DoesNotExist:
+        return with_cors(JsonResponse({"error": "文章不存在"}, status=404), request)
+    if request.method == "GET":
+        comments = ArticleComment.objects.filter(article=article).select_related("user", "user__profile")[:100]
+        return with_cors(JsonResponse({"comments": [comment_payload(comment) for comment in comments]}, json_dumps_params={"ensure_ascii": False}), request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再评论"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    try:
+        data = read_json(request)
+    except json.JSONDecodeError:
+        return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+    body = (data.get("body") or "").strip()
+    if not body:
+        return with_cors(JsonResponse({"error": "请输入评论内容"}, status=400), request)
+    if len(body) > 1000:
+        return with_cors(JsonResponse({"error": "评论不能超过 1000 个字符"}, status=400), request)
+    with transaction.atomic():
+        article = Article.objects.select_for_update().get(id=article.id)
+        comment = ArticleComment.objects.create(user=request.user, article=article, body=body)
+        article.comments = ArticleComment.objects.filter(article=article).count()
+        article.save(update_fields=["comments", "updated_at"])
+    record_active_action(request.user)
+    return with_cors(JsonResponse({
+        "comment": comment_payload(comment),
+        "article": article_payload_for_viewer(article, request.user),
+    }, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "DELETE", "OPTIONS"])
+def delete_article(request, article_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    if not (request.user.is_staff or request.user.is_superuser):
+        return with_cors(JsonResponse({"error": "只有管理员可以删除文章"}, status=403), request)
+    try:
+        article = Article.objects.get(id=article_id)
+    except Article.DoesNotExist:
+        return with_cors(JsonResponse({"error": "文章不存在"}, status=404), request)
+    article.delete()
+    return with_cors(JsonResponse({"ok": True, "id": article_id}), request)
 
 
 @csrf_exempt

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils import timezone
 from django.utils.html import format_html
-from .models import Article, Car, CarTrim, Club, Event, Guide, MarketItem, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
+from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, Car, CarTrim, Club, Event, Guide, MarketItem, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
 from .views import user_level_points
 
 
@@ -220,11 +220,40 @@ class GuideAdmin(admin.ModelAdmin):
     search_fields = ("title", "body")
 
 
+class ArticleBlockInline(admin.StackedInline):
+    model = ArticleBlock
+    extra = 0
+    fields = ("position", "block_type", "text", "image_upload", "caption")
+    ordering = ("position",)
+
+
 @admin.register(Article)
 class ArticleAdmin(ImageUploadAdminMixin, admin.ModelAdmin):
-    list_display = ("title", "category", "author", "car", "is_pinned", "featured", "state", "created_at")
+    list_display = ("title", "category", "owner", "author", "car", "views", "likes", "comments", "is_pinned", "featured", "state", "created_at")
     list_filter = ("category", "is_pinned", "featured", "state", "created_at")
-    search_fields = ("title", "summary", "body", "author")
+    search_fields = ("title", "summary", "body", "author", "owner__username")
     list_editable = ("is_pinned", "featured", "state")
     prepopulated_fields = {"slug": ("title",)}
-    fields = ("title", "slug", "category", "summary", "body", "image_upload", "image_preview", "image_caption", "image", "author", "car", "is_pinned", "featured", "state")
+    fields = ("title", "slug", "category", "summary", "body", "image_upload", "image_preview", "image_caption", "image", "owner", "author", "car", "views", "likes", "comments", "is_pinned", "featured", "state")
+    inlines = (ArticleBlockInline,)
+
+
+@admin.register(ArticleSave)
+class ArticleSaveAdmin(admin.ModelAdmin):
+    list_display = ("user", "article", "created_at")
+    search_fields = ("user__username", "article__title")
+    autocomplete_fields = ("user", "article")
+
+
+@admin.register(ArticleLike)
+class ArticleLikeAdmin(admin.ModelAdmin):
+    list_display = ("user", "article", "created_at")
+    search_fields = ("user__username", "article__title")
+    autocomplete_fields = ("user", "article")
+
+
+@admin.register(ArticleComment)
+class ArticleCommentAdmin(admin.ModelAdmin):
+    list_display = ("user", "article", "created_at")
+    search_fields = ("user__username", "article__title", "body")
+    autocomplete_fields = ("user", "article")

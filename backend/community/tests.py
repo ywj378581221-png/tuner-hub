@@ -1,10 +1,12 @@
 import base64
 import json
+import importlib
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 from django.conf import settings
+from django.apps import apps as django_apps
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
@@ -14,7 +16,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
-from .models import Article, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, UserGarageVehicle, UserProfile
+from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, UserGarageVehicle, UserProfile
 
 
 class UpdateProfileTests(TestCase):
@@ -642,6 +644,144 @@ class PinnedContentPresentationTests(TestCase):
         self.assertEqual(data["articles"][0]["image_caption"], "21万公里仪表记录")
 
 
+class ArticlePublishingTests(TestCase):
+    def setUp(self):
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.media_override = override_settings(MEDIA_ROOT=self.media_directory.name)
+        self.media_override.enable()
+        self.user = get_user_model().objects.create_user(
+            username="article_owner",
+            password="ArticleOwnerPass2026!",
+            first_name="长期车主",
+        )
+        self.client.force_login(self.user)
+
+    def tearDown(self):
+        self.media_override.disable()
+        self.media_directory.cleanup()
+
+    def test_creates_block_article_and_returns_it_on_homepage(self):
+        body_image = SimpleUploadedFile(
+            "m2c-detail.png",
+            AvatarUploadSecurityTests.valid_png,
+            content_type="image/png",
+        )
+        blocks = [
+            {"type": "paragraph", "text": "这是一台行驶二十一万公里的 M2C。"},
+            {"type": "heading", "text": "长期使用状态"},
+            {"type": "image", "image_key": "block_image_2", "caption": "二十一万公里时的车辆状态"},
+        ]
+
+        response = self.client.post(
+            "/api/articles/create/",
+            {
+                "title": "21万公里的宝马 M2C",
+                "summary": "真实记录长期使用、维修保养与改装感受。",
+                "category": "长期用车",
+                "blocks": json.dumps(blocks),
+                "block_image_2": body_image,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        article = Article.objects.get()
+        self.assertEqual(article.owner, self.user)
+        self.assertEqual(article.blocks.count(), 3)
+        image_block = article.blocks.get(block_type="image")
+        self.assertTrue(image_block.image_upload.name.startswith("article_blocks/"))
+        self.assertEqual(image_block.caption, "二十一万公里时的车辆状态")
+
+        site_response = self.client.get("/api/site-data/")
+        homepage_article = site_response.json()["articles"][0]
+        self.assertEqual(homepage_article["id"], article.id)
+        self.assertEqual(homepage_article["blocks"][2]["caption"], "二十一万公里时的车辆状态")
+        self.assertTrue(homepage_article["image"].startswith("/media/article_blocks/"))
+
+    def test_rejects_article_without_meaningful_text(self):
+        response = self.client.post(
+            "/api/articles/create/",
+            {
+                "title": "空文章",
+                "category": "车主故事",
+                "blocks": json.dumps([{"type": "paragraph", "text": ""}]),
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Article.objects.count(), 0)
+
+    def test_anonymous_user_cannot_publish_article(self):
+        self.client.logout()
+        response = self.client.post(
+            "/api/articles/create/",
+            {"title": "未登录文章", "blocks": json.dumps([{"type": "paragraph", "text": "正文"}])},
+        )
+
+        self.assertEqual(response.status_code, 401)
+
+
+class ArticleInteractionTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.owner = User.objects.create_user(username="article_author", password="ArticlePass2026!")
+        self.viewer = User.objects.create_user(username="article_reader", password="ReaderPass2026!")
+        self.article = Article.objects.create(
+            owner=self.owner,
+            author="article_author",
+            title="真实文章互动",
+            slug="real-article-interactions",
+            body="用于验证文章互动会写入数据库。",
+        )
+        ArticleBlock.objects.create(article=self.article, block_type="paragraph", position=0, text=self.article.body)
+        self.client.force_login(self.viewer)
+
+    def test_article_detail_counts_views_and_returns_blocks(self):
+        response = self.client.get(f"/api/articles/{self.article.id}/")
+
+        self.article.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.article.views, 1)
+        self.assertEqual(response.json()["article"]["blocks"][0]["text"], self.article.body)
+
+    def test_article_like_save_and_comment_are_persisted(self):
+        like_response = self.client.post(f"/api/articles/{self.article.id}/like/", data="{}", content_type="application/json")
+        save_response = self.client.post(f"/api/articles/{self.article.id}/save/", data="{}", content_type="application/json")
+        comment_response = self.client.post(
+            f"/api/articles/{self.article.id}/comments/",
+            data=json.dumps({"body": "这篇长期案例很有参考价值。"}),
+            content_type="application/json",
+        )
+
+        self.article.refresh_from_db()
+        self.assertEqual(like_response.status_code, 200)
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(comment_response.status_code, 200)
+        self.assertEqual(self.article.likes, 1)
+        self.assertEqual(self.article.comments, 1)
+        self.assertTrue(ArticleLike.objects.filter(user=self.viewer, article=self.article).exists())
+        self.assertTrue(ArticleSave.objects.filter(user=self.viewer, article=self.article).exists())
+        self.assertEqual(ArticleComment.objects.get().body, "这篇长期案例很有参考价值。")
+
+
+class LegacyLongPostPromotionTests(TestCase):
+    def test_structured_long_post_is_promoted_and_hidden_from_community(self):
+        body = "# 21万公里的宝马 M2C\n\n" + ("长期用车真实记录。" * 140)
+        body += "\n\n## 车辆状态\n\n状态记录。"
+        body += "\n\n## 保养维修\n\n维修记录。"
+        body += "\n\n## 改装感受\n\n改装记录。"
+        post = Post.objects.create(title="M2", body=body, author="长期车主")
+        migration = importlib.import_module("community.migrations.0019_promote_legacy_long_posts")
+
+        migration.promote_legacy_long_posts(django_apps, None)
+
+        post.refresh_from_db()
+        article = Article.objects.get(slug=f"promoted-post-{post.id}")
+        self.assertEqual(post.state, "hidden")
+        self.assertEqual(article.title, "21万公里的宝马 M2C")
+        self.assertEqual(article.category, "长期用车")
+        self.assertGreaterEqual(article.blocks.filter(block_type="heading").count(), 3)
+
+
 class PostInteractionTests(TestCase):
     def setUp(self):
         User = get_user_model()
@@ -876,6 +1016,19 @@ class FrontendInteractionContractTests(SimpleTestCase):
         self.assertIn("image_caption", self.source)
         self.assertIn("is_pinned", self.source)
         self.assertIn("<figcaption", self.source)
+
+    def test_long_form_articles_use_a_real_publish_flow(self):
+        required_patterns = [
+            'composerMode === "article"',
+            "/api/articles/create/",
+            "articleDraftBlocks",
+            'block.type === "image"',
+            "article-interaction-panel",
+        ]
+
+        for pattern in required_patterns:
+            with self.subTest(pattern=pattern):
+                self.assertIn(pattern, self.source)
 
 
 class PublicUserPrivacyTests(TestCase):

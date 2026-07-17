@@ -342,23 +342,29 @@ class Guide(TimeStampedModel):
 
 class Article(TimeStampedModel):
     CATEGORY_CHOICES = [
-        ("新车", "新车"),
+        ("车主故事", "车主故事"),
+        ("长期用车", "长期用车"),
+        ("改装案例", "改装案例"),
         ("资讯", "资讯"),
         ("评测", "评测"),
         ("导购", "导购"),
         ("视频", "视频"),
     ]
 
-    title = models.CharField("文章标题", max_length=180, unique=True)
+    title = models.CharField("文章标题", max_length=180)
     slug = models.SlugField("路由标识", max_length=200, unique=True)
-    category = models.CharField("栏目", max_length=30, choices=CATEGORY_CHOICES, default="资讯")
+    category = models.CharField("栏目", max_length=30, choices=CATEGORY_CHOICES, default="车主故事")
     summary = models.TextField("摘要", blank=True)
     body = models.TextField("正文", blank=True)
     image = models.CharField("封面图", max_length=300, blank=True)
     image_upload = models.FileField("上传封面图", upload_to="articles/", blank=True)
     image_caption = models.CharField("图片说明", max_length=200, blank=True)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="发布用户", related_name="community_articles", on_delete=models.SET_NULL, null=True, blank=True)
     author = models.CharField("作者", max_length=120, blank=True, default="")
     car = models.ForeignKey(Car, verbose_name="关联车型", on_delete=models.SET_NULL, null=True, blank=True)
+    views = models.PositiveIntegerField("阅读数", default=0)
+    likes = models.PositiveIntegerField("点赞数", default=0)
+    comments = models.PositiveIntegerField("评论数", default=0)
     is_pinned = models.BooleanField("置顶", default=False)
     featured = models.BooleanField("首页推荐", default=False)
     state = models.CharField("发布状态", max_length=20, choices=PublishState.choices, default=PublishState.PUBLISHED)
@@ -370,6 +376,72 @@ class Article(TimeStampedModel):
 
     def __str__(self):
         return self.title
+
+
+class ArticleBlock(TimeStampedModel):
+    TYPE_CHOICES = [
+        ("paragraph", "正文段落"),
+        ("heading", "小标题"),
+        ("image", "正文图片"),
+    ]
+
+    article = models.ForeignKey(Article, verbose_name="文章", related_name="blocks", on_delete=models.CASCADE)
+    block_type = models.CharField("内容类型", max_length=20, choices=TYPE_CHOICES)
+    position = models.PositiveIntegerField("顺序", default=0)
+    text = models.TextField("文字内容", blank=True)
+    image_upload = models.FileField("正文图片", upload_to="article_blocks/", blank=True)
+    caption = models.CharField("图片说明", max_length=200, blank=True)
+
+    class Meta:
+        verbose_name = "文章内容块"
+        verbose_name_plural = "文章内容块"
+        ordering = ["position", "id"]
+        constraints = [models.UniqueConstraint(fields=("article", "position"), name="unique_article_block_position")]
+
+    def __str__(self):
+        return f"{self.article.title} #{self.position + 1}"
+
+
+class ArticleSave(TimeStampedModel):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="用户", related_name="saved_articles", on_delete=models.CASCADE)
+    article = models.ForeignKey(Article, verbose_name="文章", related_name="saves", on_delete=models.CASCADE)
+
+    class Meta:
+        verbose_name = "文章收藏"
+        verbose_name_plural = "文章收藏"
+        constraints = [models.UniqueConstraint(fields=("user", "article"), name="unique_user_article_save")]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user} 收藏 {self.article}"
+
+
+class ArticleLike(TimeStampedModel):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="用户", related_name="liked_articles", on_delete=models.CASCADE)
+    article = models.ForeignKey(Article, verbose_name="文章", related_name="like_relations", on_delete=models.CASCADE)
+
+    class Meta:
+        verbose_name = "文章点赞"
+        verbose_name_plural = "文章点赞"
+        constraints = [models.UniqueConstraint(fields=("user", "article"), name="unique_user_article_like")]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user} 点赞 {self.article}"
+
+
+class ArticleComment(TimeStampedModel):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="用户", related_name="article_comments", on_delete=models.CASCADE)
+    article = models.ForeignKey(Article, verbose_name="文章", related_name="comment_records", on_delete=models.CASCADE)
+    body = models.TextField("评论内容")
+
+    class Meta:
+        verbose_name = "文章评论"
+        verbose_name_plural = "文章评论"
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.user}: {self.body[:24]}"
 
 
 class DealerOffer(TimeStampedModel):

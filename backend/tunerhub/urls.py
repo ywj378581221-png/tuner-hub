@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import path, re_path
-from community.views import change_password, confirm_password_reset, create_garage_vehicle, create_post, create_project_record, current_user, delete_post, login_user, logout_user, mark_private_message_read, post_comments, private_messages, register_user, request_password_reset, send_private_message, site_data, toggle_follow_user, toggle_post_like, toggle_post_save, update_email, update_profile, upload_avatar
+from community.views import article_comments, article_detail, change_password, confirm_password_reset, create_article, create_garage_vehicle, create_post, create_project_record, current_user, delete_article, delete_post, login_user, logout_user, mark_private_message_read, post_comments, private_messages, register_user, request_password_reset, send_private_message, site_data, toggle_article_like, toggle_article_save, toggle_follow_user, toggle_post_like, toggle_post_save, update_email, update_profile, upload_avatar
 from tunerhub.views import frontend_app
 
 urlpatterns = [
@@ -42,6 +42,12 @@ urlpatterns = [
     path('api/posts/<int:post_id>/like/', toggle_post_like, name='toggle-post-like'),
     path('api/posts/<int:post_id>/comments/', post_comments, name='post-comments'),
     path('api/posts/<int:post_id>/delete/', delete_post, name='delete-post'),
+    path('api/articles/create/', create_article, name='create-article'),
+    path('api/articles/<int:article_id>/', article_detail, name='article-detail'),
+    path('api/articles/<int:article_id>/save/', toggle_article_save, name='toggle-article-save'),
+    path('api/articles/<int:article_id>/like/', toggle_article_like, name='toggle-article-like'),
+    path('api/articles/<int:article_id>/comments/', article_comments, name='article-comments'),
+    path('api/articles/<int:article_id>/delete/', delete_article, name='delete-article'),
     path('api/garage/create/', create_garage_vehicle, name='create-garage-vehicle'),
     path('api/projects/create/', create_project_record, name='create-project-record'),
     path('admin/', admin.site.urls),

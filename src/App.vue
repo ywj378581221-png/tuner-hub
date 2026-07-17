@@ -3,6 +3,8 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
   PhBell as Bell,
+  PhArrowDown as ArrowDown,
+  PhArrowUp as ArrowUp,
   PhBookmarkSimple as BookmarkSimple,
   PhCalendarBlank as CalendarBlank,
   PhChatCircle as ChatCircle,
@@ -107,6 +109,7 @@ const activeTab = ref(0);
 const activeFilter = ref(0);
 const saved = ref(new Set());
 const showComposer = ref(false);
+const composerMode = ref("post");
 const showAuthModal = ref(false);
 const showMessageModal = ref(false);
 const showGarageModal = ref(false);
@@ -141,6 +144,16 @@ const draftImagePreview = ref("");
 const draftImageCaption = ref("");
 const postImageInput = ref(null);
 const publishingPost = ref(false);
+const publishingArticle = ref(false);
+const articleComments = ref([]);
+const articleCommentBody = ref("");
+const articleCommentSubmitting = ref(false);
+const articleCoverInput = ref(null);
+const articleCoverFile = ref(null);
+const articleCoverPreview = ref("");
+const articleDraft = ref({ title: "", summary: "", category: "长期用车", car: "", image_caption: "" });
+let articleBlockSequence = 1;
+const articleDraftBlocks = ref([{ key: articleBlockSequence, type: "paragraph", text: "", caption: "", file: null, preview: "" }]);
 const showSpecsPanel = ref(false);
 const showLocationPanel = ref(false);
 const draftSpecs = ref([{ label: "", value: "" }]);
@@ -162,6 +175,7 @@ const filteredPosts = computed(() => {
 });
 
 const savedPosts = computed(() => posts.value.filter((post) => post.is_saved));
+const savedArticles = computed(() => articles.value.filter((article) => article.is_saved));
 
 const unreadMessages = computed(() => inboxMessages.value.filter((message) => message.receiver.id === currentUser.value?.id && !message.is_read));
 
@@ -338,9 +352,9 @@ const routeDetail = computed(() => {
       image: article.image || "",
       imageCaption: article.image_caption || "",
       body: article.body || article.summary,
-      meta: `${article.author} · ${article.car || "综合内容"}`,
+      meta: `${article.author} · ${article.time || "刚刚"}`,
       isPinned: article.is_pinned,
-      rows: [["栏目", article.category], ["车型", article.car || "不限"], ["作者", article.author || "用户投稿"], ["状态", "已发布"]],
+      rows: [["栏目", article.category], ["车型", article.car || "不限"], ["阅读", article.views || 0], ["点赞", article.likes || 0], ["评论", article.comments || 0]],
     };
   }
 
@@ -554,6 +568,13 @@ function normalizeImages(items, keys) {
   });
 }
 
+function normalizeArticles(items) {
+  return normalizeImages(items, ["image", "author_avatar"]).map((article) => ({
+    ...article,
+    blocks: (article.blocks || []).map((block) => ({ ...block, image: mediaUrl(block.image) })),
+  }));
+}
+
 async function apiFetch(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (options.body && !(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
@@ -582,7 +603,7 @@ async function loadSiteData() {
     if (Array.isArray(data.market)) market.value = normalizeImages(data.market, ["img"]);
     if (Array.isArray(data.topics)) topicCards.value = data.topics;
     if (Array.isArray(data.guides)) buyingGuides.value = data.guides;
-    if (Array.isArray(data.articles)) articles.value = normalizeImages(data.articles, ["image"]);
+    if (Array.isArray(data.articles)) articles.value = normalizeArticles(data.articles);
     if (Array.isArray(data.users)) userCards.value = normalizeImages(data.users, ["avatar"]);
     if (Array.isArray(data.garage)) garageVehicles.value = data.garage;
     if (Array.isArray(data.projects)) projectRecords.value = data.projects;
@@ -626,6 +647,7 @@ onMounted(async () => {
   await loadSiteData();
   await loadMessages();
   if (route.path === "/create" || route.path.startsWith("/create/")) {
+    composerMode.value = route.path === "/create/article" ? "article" : "post";
     showComposer.value = true;
     showSpecsPanel.value = route.path === "/create/specs";
     showLocationPanel.value = route.path === "/create/location";
@@ -637,6 +659,12 @@ onMounted(async () => {
 watch(routePost, (post) => {
   commentBody.value = "";
   loadPostComments(post?.id);
+});
+
+watch(() => routeArticle.value?.id, (articleId) => {
+  articleCommentBody.value = "";
+  if (articleId) loadArticleDetail(articleId);
+  else articleComments.value = [];
 });
 
 function switchPage(index) {
@@ -663,12 +691,21 @@ async function openPost(post) {
   await loadPostComments(post.id);
 }
 
-function openComposer() {
+function openComposer(mode = "post") {
+  composerMode.value = mode;
   goTo("/create");
   showComposer.value = true;
 }
 
+function openArticleComposer(car = null) {
+  composerMode.value = "article";
+  articleDraft.value.car = car?.name || "";
+  goTo("/create/article");
+  showComposer.value = true;
+}
+
 async function openComposerForCar(car, path = "/create") {
+  composerMode.value = "post";
   draftCar.value = car?.name || "";
   goTo(path);
   showComposer.value = true;
@@ -750,6 +787,78 @@ function handlePostImage(event) {
   reader.readAsDataURL(file);
 }
 
+function articleBlock(type) {
+  articleBlockSequence += 1;
+  return { key: articleBlockSequence, type, text: "", caption: "", file: null, preview: "" };
+}
+
+function addArticleBlock(type) {
+  if (articleDraftBlocks.value.length >= 40) {
+    showToast("文章最多添加 40 个内容段落");
+    return;
+  }
+  articleDraftBlocks.value.push(articleBlock(type));
+}
+
+function removeArticleBlock(index) {
+  const block = articleDraftBlocks.value[index];
+  if (block?.preview?.startsWith("blob:")) URL.revokeObjectURL(block.preview);
+  articleDraftBlocks.value.splice(index, 1);
+  if (!articleDraftBlocks.value.length) articleDraftBlocks.value.push(articleBlock("paragraph"));
+}
+
+function moveArticleBlock(index, offset) {
+  const target = index + offset;
+  if (target < 0 || target >= articleDraftBlocks.value.length) return;
+  const [block] = articleDraftBlocks.value.splice(index, 1);
+  articleDraftBlocks.value.splice(target, 0, block);
+}
+
+function validComposerImage(file, label) {
+  const extension = file.name.split(".").pop()?.toLowerCase();
+  if (!["jpg", "jpeg", "png", "webp"].includes(extension)) {
+    showToast(`${label}仅支持 JPG、PNG 或 WebP`);
+    return false;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    showToast(`${label}不能超过 10MB`);
+    return false;
+  }
+  return true;
+}
+
+function handleArticleCover(event) {
+  const file = event.target.files?.[0];
+  if (!file || !validComposerImage(file, "文章封面")) return;
+  articleCoverFile.value = file;
+  articleCoverPreview.value = URL.createObjectURL(file);
+}
+
+function clearArticleCover() {
+  if (articleCoverPreview.value.startsWith("blob:")) URL.revokeObjectURL(articleCoverPreview.value);
+  articleCoverFile.value = null;
+  articleCoverPreview.value = "";
+  articleDraft.value.image_caption = "";
+  if (articleCoverInput.value) articleCoverInput.value.value = "";
+}
+
+function handleArticleBlockImage(event, block) {
+  const file = event.target.files?.[0];
+  if (!file || !validComposerImage(file, "正文图片")) return;
+  if (block.preview?.startsWith("blob:")) URL.revokeObjectURL(block.preview);
+  block.file = file;
+  block.preview = URL.createObjectURL(file);
+}
+
+function resetArticleDraft() {
+  clearArticleCover();
+  articleDraftBlocks.value.forEach((block) => {
+    if (block.preview?.startsWith("blob:")) URL.revokeObjectURL(block.preview);
+  });
+  articleDraft.value = { title: "", summary: "", category: "长期用车", car: "", image_caption: "" };
+  articleDraftBlocks.value = [articleBlock("paragraph")];
+}
+
 function openAuth(mode = "login") {
   authMode.value = mode;
   authMessage.value = "";
@@ -827,6 +936,76 @@ function replacePost(updatedPost) {
   if (normalized.is_saved) next.add(normalized.id);
   else next.delete(normalized.id);
   saved.value = next;
+}
+
+function replaceArticle(updatedArticle) {
+  const normalized = normalizeArticles([updatedArticle])[0];
+  articles.value = articles.value.map((article) => article.id === normalized.id ? { ...article, ...normalized } : article);
+}
+
+async function loadArticleDetail(articleId) {
+  if (!articleId) return;
+  try {
+    const data = await apiFetch(`/api/articles/${articleId}/`);
+    replaceArticle(data.article);
+    articleComments.value = normalizeImages(data.comments || [], ["avatar"]);
+  } catch {
+    articleComments.value = [];
+  }
+}
+
+async function toggleArticleSave(article) {
+  if (!currentUser.value) {
+    openAuth("login");
+    authMessage.value = "请先登录再收藏文章";
+    return;
+  }
+  try {
+    const data = await apiFetch(`/api/articles/${article.id}/save/`, { method: "POST", body: "{}" });
+    replaceArticle(data.article);
+    showToast(data.saved ? "已收藏" : "已取消收藏");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function toggleArticleLike(article) {
+  if (!currentUser.value) {
+    openAuth("login");
+    authMessage.value = "请先登录再点赞";
+    return;
+  }
+  try {
+    const data = await apiFetch(`/api/articles/${article.id}/like/`, { method: "POST", body: "{}" });
+    replaceArticle(data.article);
+    showToast(data.liked ? "已点赞" : "已取消点赞");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function submitArticleComment() {
+  if (!routeArticle.value || articleCommentSubmitting.value) return;
+  if (!currentUser.value) {
+    openAuth("login");
+    authMessage.value = "请先登录再评论";
+    return;
+  }
+  articleCommentSubmitting.value = true;
+  try {
+    const data = await apiFetch(`/api/articles/${routeArticle.value.id}/comments/`, {
+      method: "POST",
+      body: JSON.stringify({ body: articleCommentBody.value }),
+    });
+    articleComments.value = [...articleComments.value, normalizeImages([data.comment], ["avatar"])[0]];
+    replaceArticle(data.article);
+    articleCommentBody.value = "";
+    showToast("评论已发布");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    articleCommentSubmitting.value = false;
+  }
 }
 
 async function toggleSave(id) {
@@ -1063,6 +1242,18 @@ async function deleteCommunityPost(post) {
   }
 }
 
+async function deleteCommunityArticle(article) {
+  if (!article || !canManageCommunity()) return;
+  try {
+    await apiFetch(`/api/articles/${article.id}/delete/`, { method: "POST", body: "{}" });
+    articles.value = articles.value.filter((item) => item.id !== article.id);
+    showToast("文章已删除");
+    if (route.path === `/articles/${article.id}`) goTo("/");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 async function submitGarageVehicle() {
   if (!currentUser.value) {
     showGarageModal.value = false;
@@ -1152,6 +1343,53 @@ async function publishPost() {
   }
 }
 
+async function publishArticle() {
+  if (!currentUser.value) {
+    showComposer.value = false;
+    openAuth("login");
+    authMessage.value = "请先登录再发布文章";
+    return;
+  }
+  if (publishingArticle.value) return;
+
+  publishingArticle.value = true;
+  try {
+    const formData = new FormData();
+    formData.append("title", articleDraft.value.title.trim());
+    formData.append("summary", articleDraft.value.summary.trim());
+    formData.append("category", articleDraft.value.category);
+    formData.append("car", articleDraft.value.car);
+    formData.append("image_caption", articleDraft.value.image_caption.trim());
+    if (articleCoverFile.value) formData.append("cover_image", articleCoverFile.value);
+
+    const blocks = articleDraftBlocks.value.map((block, index) => {
+      const payload = { type: block.type, text: block.text?.trim() || "", caption: block.caption?.trim() || "" };
+      if (block.type === "image" && block.file) {
+        payload.image_key = `block_image_${index}`;
+        formData.append(payload.image_key, block.file);
+      }
+      return payload;
+    });
+    formData.append("blocks", JSON.stringify(blocks));
+
+    const data = await apiFetch("/api/articles/create/", { method: "POST", body: formData });
+    const article = normalizeArticles([data.article])[0];
+    articles.value = [
+      ...articles.value.filter((item) => item.is_pinned),
+      article,
+      ...articles.value.filter((item) => !item.is_pinned),
+    ];
+    showComposer.value = false;
+    resetArticleDraft();
+    showToast("文章已发布并显示在首页");
+    goTo(`/articles/${article.id}`);
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    publishingArticle.value = false;
+  }
+}
+
 </script>
 
 <template>
@@ -1185,7 +1423,7 @@ async function publishPost() {
       </div>
     </header>
 
-    <main class="shell">
+    <main class="shell" :class="{ 'article-shell': routeArticle }">
       <aside class="sidebar" :class="{ 'mobile-open': menuOpen }">
         <button class="close-menu" aria-label="关闭菜单" @click="menuOpen = false"><X :size="20" /></button>
         <div class="profile">
@@ -1392,14 +1630,19 @@ async function publishPost() {
               </div>
             </section>
             <section v-if="route.path === '/saved'" class="data-panel">
-              <div class="module-head"><h2>已收藏帖子</h2><span>{{ savedPosts.length }} 条</span></div>
+              <div class="module-head"><h2>收藏内容</h2><span>{{ savedPosts.length + savedArticles.length }} 条</span></div>
+              <button v-for="article in savedArticles" :key="`saved-article-${article.id}`" class="topic-row" @click="goTo(`/articles/${article.id}`)">
+                <strong>{{ article.title }}</strong>
+                <span>文章 · {{ article.author }} · {{ article.time }}</span>
+                <p>{{ article.summary }}</p>
+              </button>
               <button v-for="post in savedPosts" :key="post.id" class="topic-row" @click="openPost(post)">
                 <strong>{{ post.title }}</strong>
-                <span>{{ post.author }} · {{ post.time }}</span>
+                <span>帖子 · {{ post.author }} · {{ post.time }}</span>
                 <p>{{ post.body }}</p>
               </button>
               <p v-if="!currentUser" class="empty-note">登录后查看当前账号的收藏。</p>
-              <p v-else-if="!savedPosts.length" class="empty-note">还没有收藏帖子。</p>
+              <p v-else-if="!savedPosts.length && !savedArticles.length" class="empty-note">还没有收藏内容。</p>
             </section>
             <section v-if="route.path.startsWith('/messages')" class="data-panel">
               <div class="module-head"><h2>全部私信</h2><button @click="loadMessages">刷新</button></div>
@@ -1460,14 +1703,45 @@ async function publishPost() {
                 </div>
                 <h1>{{ routeArticle.title }}</h1>
                 <p v-if="routeArticle.summary" class="article-summary">{{ routeArticle.summary }}</p>
-                <small>{{ routeArticle.author || '用户投稿' }} · {{ routeArticle.car || '综合内容' }}</small>
+                <div class="article-author-line">
+                  <img :src="routeArticle.author_avatar || defaultAvatar" :alt="routeArticle.author" />
+                  <small>{{ routeArticle.author || '用户投稿' }} · {{ routeArticle.time }} · {{ routeArticle.car || '综合内容' }} · {{ routeArticle.views || 0 }} 阅读</small>
+                </div>
+                <button v-if="canManageCommunity()" class="danger-button" @click="deleteCommunityArticle(routeArticle)">删除文章</button>
               </header>
-              <figure v-if="routeArticle.image" class="article-cover">
+              <figure v-if="routeArticle.has_cover && routeArticle.image" class="article-cover">
                 <img :src="routeArticle.image" :alt="routeArticle.title" />
                 <figcaption v-if="routeArticle.image_caption">{{ routeArticle.image_caption }}</figcaption>
               </figure>
-              <div class="article-body">{{ routeArticle.body || routeArticle.summary }}</div>
+              <div v-if="routeArticle.blocks?.length" class="article-body article-blocks">
+                <template v-for="block in routeArticle.blocks" :key="block.id || block.position">
+                  <h2 v-if='block.type === "heading"'>{{ block.text }}</h2>
+                  <p v-else-if='block.type === "paragraph"'>{{ block.text }}</p>
+                  <figure v-else-if='block.type === "image"' class="article-inline-image">
+                    <img :src="block.image" :alt="block.caption || routeArticle.title" />
+                    <figcaption v-if="block.caption">{{ block.caption }}</figcaption>
+                  </figure>
+                </template>
+              </div>
+              <div v-else class="article-body">{{ routeArticle.body || routeArticle.summary }}</div>
             </article>
+            <section v-if="routeArticle" class="post-interaction-panel article-interaction-panel">
+              <div class="post-primary-actions">
+                <button :class="{ liked: routeArticle.is_liked }" @click="toggleArticleLike(routeArticle)"><Sparkle :weight="routeArticle.is_liked ? 'fill' : 'regular'" :size="18" />{{ routeArticle.likes || 0 }} 点赞</button>
+                <button :class="{ saved: routeArticle.is_saved }" @click="toggleArticleSave(routeArticle)"><BookmarkSimple :weight="routeArticle.is_saved ? 'fill' : 'regular'" :size="18" />{{ routeArticle.is_saved ? '已收藏' : '收藏' }}</button>
+              </div>
+              <form class="comment-form" @submit.prevent="submitArticleComment">
+                <textarea v-model="articleCommentBody" maxlength="1000" placeholder="说说这篇案例对你的帮助或疑问"></textarea>
+                <button type="submit" :disabled="articleCommentSubmitting || !articleCommentBody.trim()">{{ articleCommentSubmitting ? '发布中' : '发表评论' }}</button>
+              </form>
+              <div class="comment-list">
+                <article v-for="comment in articleComments" :key="comment.id">
+                  <img :src="comment.avatar || defaultAvatar" :alt="comment.author" />
+                  <div><strong>{{ comment.author }}</strong><small>{{ comment.time }}</small><p>{{ comment.body }}</p></div>
+                </article>
+                <p v-if="!articleComments.length" class="empty-note">暂无评论。</p>
+              </div>
+            </section>
             <article v-else-if="!isFunctionalListPage" class="detail-hero-card">
               <figure v-if="routeDetail.image" class="detail-media">
                 <img :src="routeDetail.image" :alt="routeDetail.title" />
@@ -1579,6 +1853,7 @@ async function publishPost() {
             <div>
               <button @click="openPhotoComposer"><ImageIcon :size="18" />图片</button>
               <button @click="openSpecsComposer()"><SlidersHorizontal :size="18" />参数</button>
+              <button @click="openArticleComposer()"><PaperPlaneTilt :size="18" />文章</button>
             </div>
           </section>
 
@@ -1705,6 +1980,7 @@ async function publishPost() {
             <div>
               <button @click="openPhotoComposer"><ImageIcon :size="18" />图片</button>
               <button @click="openSpecsComposer()"><SlidersHorizontal :size="18" />参数</button>
+              <button @click="openArticleComposer()"><PaperPlaneTilt :size="18" />文章</button>
             </div>
           </section>
           <section class="activity-tabs">
@@ -1853,54 +2129,111 @@ async function publishPost() {
 
     <div v-if="showComposer" class="modal-wrap">
       <button class="scrim" @click="showComposer = false"></button>
-      <section class="composer-modal">
+      <section class="composer-modal" :class="{ 'article-composer-modal': composerMode === 'article' }">
         <div class="modal-head">
           <h2>发布内容</h2>
           <button class="icon-button" @click="showComposer = false"><X :size="20" /></button>
         </div>
-        <div class="type-grid">
-          <button v-for="label in feedFilters.slice(1)" :key="label" :class="{ active: draftType === label }" @click="draftType = label">{{ label }}</button>
+        <div class="composer-mode-tabs">
+          <button :class="{ active: composerMode === 'post' }" @click="composerMode = 'post'">发布动态</button>
+          <button :class="{ active: composerMode === 'article' }" @click="composerMode = 'article'">发布文章</button>
         </div>
-        <input v-model="draftTitle" class="composer-title" maxlength="180" placeholder="请输入帖子标题" />
-        <select v-model="draftCar" class="composer-title">
-          <option value="">选择关联车型（可选）</option>
-          <option v-for="car in enrichedCars" :key="car.name" :value="car.name">{{ car.name }}</option>
-        </select>
-        <textarea v-model="draft" maxlength="20000" placeholder="聊聊用车感受、改装进度、施工记录或聚会信息"></textarea>
-        <input ref="postImageInput" class="composer-image-input" type="file" accept="image/jpeg,image/png,image/webp" @change="handlePostImage" />
-        <div v-if="draftImagePreview" class="composer-image-preview">
-          <img :src="draftImagePreview" alt="帖子图片预览" />
-          <button class="icon-button" title="移除图片" @click="clearDraftImage"><X :size="18" /></button>
-        </div>
-        <input v-if="draftImagePreview" v-model="draftImageCaption" class="composer-caption-input" maxlength="200" placeholder="添加图片说明（可选，最多200字）" />
-        <section v-if="showSpecsPanel" class="composer-extra-panel">
-          <div class="composer-extra-head">
-            <strong>车辆参数</strong>
-            <button class="icon-button" title="收起参数" @click="showSpecsPanel = false"><X :size="17" /></button>
+
+        <template v-if="composerMode === 'post'">
+          <div class="type-grid">
+            <button v-for="label in feedFilters.slice(1)" :key="label" :class="{ active: draftType === label }" @click="draftType = label">{{ label }}</button>
           </div>
-          <div v-for="(spec, index) in draftSpecs" :key="index" class="composer-spec-row">
-            <input v-model="spec.label" maxlength="38" placeholder="参数名称，如轮毂" />
-            <input v-model="spec.value" maxlength="80" placeholder="数值，如18×9.5J" />
-            <button class="icon-button" title="删除此参数" @click="removeDraftSpec(index)"><X :size="17" /></button>
+          <input v-model="draftTitle" class="composer-title" maxlength="180" placeholder="请输入帖子标题" />
+          <select v-model="draftCar" class="composer-title">
+            <option value="">选择关联车型（可选）</option>
+            <option v-for="car in enrichedCars" :key="car.name" :value="car.name">{{ car.name }}</option>
+          </select>
+          <textarea v-model="draft" maxlength="20000" placeholder="聊聊用车感受、改装进度、施工记录或聚会信息"></textarea>
+          <input ref="postImageInput" class="composer-image-input" type="file" accept="image/jpeg,image/png,image/webp" @change="handlePostImage" />
+          <div v-if="draftImagePreview" class="composer-image-preview">
+            <img :src="draftImagePreview" alt="帖子图片预览" />
+            <button class="icon-button" title="移除图片" @click="clearDraftImage"><X :size="18" /></button>
           </div>
-          <button class="composer-add-row" @click="addDraftSpec"><Plus :size="17" />继续添加</button>
-        </section>
-        <section v-if="showLocationPanel" class="composer-extra-panel">
-          <div class="composer-extra-head">
-            <strong>所在位置</strong>
-            <button class="icon-button" title="移除位置" @click="showLocationPanel = false; draftLocation = ''"><X :size="17" /></button>
+          <input v-if="draftImagePreview" v-model="draftImageCaption" class="composer-caption-input" maxlength="200" placeholder="添加图片说明（可选，最多200字）" />
+          <section v-if="showSpecsPanel" class="composer-extra-panel">
+            <div class="composer-extra-head">
+              <strong>车辆参数</strong>
+              <button class="icon-button" title="收起参数" @click="showSpecsPanel = false"><X :size="17" /></button>
+            </div>
+            <div v-for="(spec, index) in draftSpecs" :key="index" class="composer-spec-row">
+              <input v-model="spec.label" maxlength="38" placeholder="参数名称，如轮毂" />
+              <input v-model="spec.value" maxlength="80" placeholder="数值，如18×9.5J" />
+              <button class="icon-button" title="删除此参数" @click="removeDraftSpec(index)"><X :size="17" /></button>
+            </div>
+            <button class="composer-add-row" @click="addDraftSpec"><Plus :size="17" />继续添加</button>
+          </section>
+          <section v-if="showLocationPanel" class="composer-extra-panel">
+            <div class="composer-extra-head">
+              <strong>所在位置</strong>
+              <button class="icon-button" title="移除位置" @click="showLocationPanel = false; draftLocation = ''"><X :size="17" /></button>
+            </div>
+            <div class="composer-location-row">
+              <MapPin :size="19" />
+              <input ref="locationInput" v-model="draftLocation" maxlength="120" placeholder="城市或地点，如上海国际赛车场" />
+            </div>
+          </section>
+          <div class="composer-tools">
+            <button @click="choosePostImage"><ImageIcon :size="18" />{{ draftImage ? '更换图片' : '添加图片' }}</button>
+            <button :class="{ active: showSpecsPanel }" @click="revealSpecsPanel"><Gauge :size="18" />添加参数</button>
+            <button :class="{ active: showLocationPanel }" @click="revealLocationPanel"><MapPin :size="18" />添加位置</button>
           </div>
-          <div class="composer-location-row">
-            <MapPin :size="19" />
-            <input ref="locationInput" v-model="draftLocation" maxlength="120" placeholder="城市或地点，如上海国际赛车场" />
+          <button class="post-button" :disabled="publishingPost" @click="publishPost"><PaperPlaneTilt :size="18" />{{ publishingPost ? '发布中' : '发布动态' }}</button>
+        </template>
+
+        <template v-else-if='composerMode === "article"'>
+          <div class="type-grid article-category-grid">
+            <button v-for="label in ['车主故事', '长期用车', '改装案例', '评测']" :key="label" :class="{ active: articleDraft.category === label }" @click="articleDraft.category = label">{{ label }}</button>
           </div>
-        </section>
-        <div class="composer-tools">
-          <button @click="choosePostImage"><ImageIcon :size="18" />{{ draftImage ? '更换图片' : '添加图片' }}</button>
-          <button :class="{ active: showSpecsPanel }" @click="revealSpecsPanel"><Gauge :size="18" />添加参数</button>
-          <button :class="{ active: showLocationPanel }" @click="revealLocationPanel"><MapPin :size="18" />添加位置</button>
-        </div>
-        <button class="post-button" :disabled="publishingPost" @click="publishPost"><PaperPlaneTilt :size="18" />{{ publishingPost ? '发布中' : '发布到 TH' }}</button>
+          <input v-model="articleDraft.title" class="composer-title" maxlength="180" placeholder="文章标题，例如：21万公里的宝马 M2C" />
+          <textarea v-model="articleDraft.summary" class="article-summary-input" maxlength="500" placeholder="用两三句话说明这篇文章能给车友什么参考（可选）"></textarea>
+          <select v-model="articleDraft.car" class="composer-title">
+            <option value="">选择关联车型（可选）</option>
+            <option v-for="car in enrichedCars" :key="car.name" :value="car.name">{{ car.name }}</option>
+          </select>
+
+          <section class="article-cover-editor">
+            <div class="composer-extra-head"><strong>文章封面</strong></div>
+            <input ref="articleCoverInput" class="composer-image-input" type="file" accept="image/jpeg,image/png,image/webp" @change="handleArticleCover" />
+            <button v-if="!articleCoverPreview" class="article-image-picker" @click="articleCoverInput?.click()"><ImageIcon :size="20" />选择封面</button>
+            <div v-else class="composer-image-preview article-cover-preview">
+              <img :src="articleCoverPreview" alt="文章封面预览" />
+              <button class="icon-button" title="移除封面" @click="clearArticleCover"><X :size="18" /></button>
+            </div>
+            <input v-if="articleCoverPreview" v-model="articleDraft.image_caption" class="composer-caption-input" maxlength="200" placeholder="封面图片说明（可选）" />
+          </section>
+
+          <section class="article-block-editor">
+            <div class="composer-extra-head"><strong>文章正文</strong></div>
+            <article v-for="(block, index) in articleDraftBlocks" :key="block.key" class="article-draft-block">
+              <div class="article-block-head">
+                <span>{{ block.type === 'heading' ? '小标题' : block.type === 'image' ? '图片' : '正文段落' }}</span>
+                <div>
+                  <button class="icon-button" title="上移" :disabled="index === 0" @click="moveArticleBlock(index, -1)"><ArrowUp :size="17" /></button>
+                  <button class="icon-button" title="下移" :disabled="index === articleDraftBlocks.length - 1" @click="moveArticleBlock(index, 1)"><ArrowDown :size="17" /></button>
+                  <button class="icon-button" title="删除" @click="removeArticleBlock(index)"><X :size="17" /></button>
+                </div>
+              </div>
+              <input v-if="block.type === 'heading'" v-model="block.text" maxlength="120" placeholder="输入小标题" />
+              <textarea v-else-if="block.type === 'paragraph'" v-model="block.text" maxlength="10000" placeholder="输入正文内容"></textarea>
+              <div v-else class="article-block-image-editor">
+                <input type="file" accept="image/jpeg,image/png,image/webp" @change="handleArticleBlockImage($event, block)" />
+                <img v-if="block.preview" :src="block.preview" alt="正文图片预览" />
+                <input v-if="block.preview" v-model="block.caption" maxlength="200" placeholder="图片说明（可选）" />
+              </div>
+            </article>
+            <div class="article-block-tools">
+              <button @click="addArticleBlock('paragraph')"><Plus :size="17" />正文段落</button>
+              <button @click="addArticleBlock('heading')"><Plus :size="17" />小标题</button>
+              <button @click="addArticleBlock('image')"><ImageIcon :size="17" />图片</button>
+            </div>
+          </section>
+          <button class="post-button" :disabled="publishingArticle" @click="publishArticle"><PaperPlaneTilt :size="18" />{{ publishingArticle ? '发布中' : '发布文章' }}</button>
+        </template>
       </section>
     </div>
 
