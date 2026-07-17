@@ -195,6 +195,7 @@ class Shop(TimeStampedModel):
 
 class Post(TimeStampedModel):
     TYPE_CHOICES = [
+        ("聊车", "聊车"),
         ("改装进度", "改装进度"),
         ("聚会", "聚会"),
         ("店家施工", "店家施工"),
@@ -203,8 +204,8 @@ class Post(TimeStampedModel):
 
     title = models.CharField("标题", max_length=180)
     body = models.TextField("正文")
-    post_type = models.CharField("内容类型", max_length=30, choices=TYPE_CHOICES, default="改装进度")
-    tone = models.CharField("颜色标识", max_length=20, default="blue")
+    post_type = models.CharField("内容类型", max_length=30, choices=TYPE_CHOICES, default="聊车")
+    tone = models.CharField("颜色标识", max_length=20, default="gray")
     image = models.CharField("图片地址", max_length=300, blank=True)
     image_upload = models.FileField("上传图片", upload_to="posts/", blank=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="发布用户", related_name="community_posts", on_delete=models.SET_NULL, null=True, blank=True)

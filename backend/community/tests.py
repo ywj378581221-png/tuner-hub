@@ -540,6 +540,21 @@ class PostImageUploadTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(Post.objects.count(), 1)
 
+    def test_defaults_plain_post_to_chat_category(self):
+        response = self.client.post(
+            "/api/posts/create/",
+            data=json.dumps({
+                "title": "日常驾驶感受",
+                "body": "分享一次普通的用车体验。",
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        post = Post.objects.get()
+        self.assertEqual(post.post_type, "聊车")
+        self.assertEqual(post.tone, "gray")
+
     def test_rejects_more_than_eight_specs(self):
         response = self.client.post(
             "/api/posts/create/",
@@ -775,6 +790,16 @@ class FrontendInteractionContractTests(SimpleTestCase):
         for pattern in required_patterns:
             with self.subTest(pattern=pattern):
                 self.assertIn(pattern, self.source)
+
+    def test_community_page_has_publish_controls_and_filters(self):
+        community_section = self.source.split('<template v-else-if="activePage === 3">', 1)[1]
+        community_section = community_section.split('<template v-else-if="activePage === 4">', 1)[0]
+
+        self.assertIn('@click="openComposer"', community_section)
+        self.assertIn('@click="openPhotoComposer"', community_section)
+        self.assertIn('@click="openSpecsComposer()"', community_section)
+        self.assertIn('class="activity-tabs"', community_section)
+        self.assertIn('"聊车"', self.source)
 
 
 class PublicUserPrivacyTests(TestCase):

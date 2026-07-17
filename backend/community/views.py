@@ -1010,7 +1010,7 @@ def create_post(request):
 
     title = (data.get("title") or "").strip()
     body = (data.get("body") or "").strip()
-    post_type = (data.get("type") or "改装进度").strip()
+    post_type = (data.get("type") or "聊车").strip()
     car_value = (data.get("car") or "").strip()
     location = (data.get("location") or "").strip()
     if not title or not body:
@@ -1033,15 +1033,15 @@ def create_post(request):
         if image_error:
             return with_cors(JsonResponse({"error": image_error}, status=400), request)
 
-    tone_map = {"改装进度": "blue", "聚会": "purple", "店家施工": "green", "二手市场": "orange"}
+    tone_map = {"聊车": "gray", "改装进度": "blue", "聚会": "purple", "店家施工": "green", "二手市场": "orange"}
     car = None
     if car_value:
         car = Car.objects.filter(name=car_value).first() or Car.objects.filter(slug=car_value).first()
     post = Post.objects.create(
         title=title,
         body=body,
-        post_type=post_type if post_type in tone_map else "改装进度",
-        tone=tone_map.get(post_type, "blue"),
+        post_type=post_type if post_type in tone_map else "聊车",
+        tone=tone_map.get(post_type, "gray"),
         image="" if post_image else (data.get("image") or ""),
         image_upload=post_image,
         owner=request.user,

@@ -11,6 +11,7 @@
   --green: #20a464;
   --purple: #7a58d6;
   --orange: #f0822b;
+  --gray: #5f6672;
   font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
 }
 
@@ -1040,6 +1041,7 @@ button {
 .pill.purple { background: var(--purple); }
 .pill.green { background: var(--green); }
 .pill.orange { background: var(--orange); }
+.pill.gray { background: var(--gray); }
 
 .feed-title {
   display: block;
@@ -2543,6 +2545,14 @@ button {
 }
 
 @media (max-width: 620px) {
+  .activity-tabs .sort-button {
+    display: none;
+  }
+
+  .activity-tabs > div {
+    width: 100%;
+  }
+
   .top-actions .icon-button:not(.with-dot),
   .avatar-button {
     display: none;

@@ -48,7 +48,7 @@ const navIcons = [House, Compass, Gauge, ChatCircle, Wrench, Star];
 const routePaths = ["/", "/cars", "/reviews", "/community", "/market", "/rankings"];
 const channelTabs = ["推荐", "选车", "评测", "车友圈", "配件专区", "排行榜"];
 const channelRoutes = ["/", "/cars", "/reviews", "/community", "/market", "/rankings"];
-const feedFilters = ["全部动态", "改装进度", "聚会", "店家施工", "二手市场"];
+const feedFilters = ["全部", "聊车", "改装进度", "聚会", "店家施工", "二手市场"];
 const driveFilters = ["全部驱动", "前置后驱", "全时四驱", "ATTESA 四驱"];
 const quickLinks = [
   ["我的车库", "/garage"],
@@ -134,7 +134,7 @@ const menuOpen = ref(false);
 const toast = ref("");
 const draftTitle = ref("");
 const draft = ref("");
-const draftType = ref("改装进度");
+const draftType = ref("聊车");
 const draftCar = ref("");
 const draftImage = ref(null);
 const draftImagePreview = ref("");
@@ -419,7 +419,7 @@ const routeDetail = computed(() => {
     "/clubs": ["车友会广场", "浏览活跃车友会、成员项目车、活动和热门帖子。"],
     "/profile": ["个人中心", "管理账号资料、头像、车库、收藏和发布内容。"],
     "/admin-guide": ["内容管理说明", "管理员可以维护社区内容，普通用户看到的都是已发布内容。"],
-    "/create": ["发布内容", "选择内容类型，发布改装进度、施工记录、聚会活动或二手件信息。"],
+    "/create": ["发布内容", "选择内容类型，分享聊车动态、改装记录、聚会活动或二手件信息。"],
     "/messages/sent": ["消息已发送", "对方收到后会出现在私信记录中。"],
     "/notifications/clear": ["清空通知", "通知清空后将不再显示在列表中。"],
     "/post/submitted": ["发布成功", "内容提交后可进入审核、草稿或已发布状态。"],
@@ -1536,7 +1536,7 @@ async function publishPost() {
 
           <section class="composer-bar">
             <img :src="avatarSrc" alt="Tuner hub" />
-            <button @click="openComposer">分享改装进度、施工记录或线下聚会信息</button>
+            <button @click="openComposer">分享聊车动态、改装记录或车友聚会</button>
             <div>
               <button @click="openPhotoComposer"><ImageIcon :size="18" />图片</button>
               <button @click="openSpecsComposer()"><SlidersHorizontal :size="18" />参数</button>
@@ -1660,6 +1660,20 @@ async function publishPost() {
             <h1>车友圈</h1>
             <p>真实车主动态、项目车记录、车友会活动和用车讨论。</p>
           </section>
+          <section class="composer-bar">
+            <img :src="avatarSrc" alt="Tuner hub" />
+            <button @click="openComposer">发布动态</button>
+            <div>
+              <button @click="openPhotoComposer"><ImageIcon :size="18" />图片</button>
+              <button @click="openSpecsComposer()"><SlidersHorizontal :size="18" />参数</button>
+            </div>
+          </section>
+          <section class="activity-tabs">
+            <div>
+              <button v-for="(item, index) in feedFilters" :key="item" :class="{ active: activeFilter === index }" @click="activeFilter = index">{{ item }}</button>
+            </div>
+            <span class="sort-button static"><Funnel :size="17" />最新发布</span>
+          </section>
           <section class="feed">
             <article v-for="post in filteredPosts" :key="post.id" class="feed-item" :class="{ 'without-image': !post.image }">
               <button v-if="post.image" class="feed-image" @click="openPost(post)"><img :src="post.image" :alt="post.title" /></button>
@@ -1677,7 +1691,7 @@ async function publishPost() {
                 <span>车主动态</span>
               </button>
             </article>
-            <p v-if="!filteredPosts.length" class="empty-note">暂无车友圈内容。</p>
+            <p v-if="!filteredPosts.length" class="empty-note">暂无车友圈内容，登录后可以发布第一条动态。</p>
           </section>
         </template>
 
@@ -1813,7 +1827,7 @@ async function publishPost() {
           <option value="">选择关联车型（可选）</option>
           <option v-for="car in enrichedCars" :key="car.name" :value="car.name">{{ car.name }}</option>
         </select>
-        <textarea v-model="draft" maxlength="20000" placeholder="分享改装进度、零件清单、轮毂数据、施工记录或聚会信息"></textarea>
+        <textarea v-model="draft" maxlength="20000" placeholder="聊聊用车感受、改装进度、施工记录或聚会信息"></textarea>
         <input ref="postImageInput" class="composer-image-input" type="file" accept="image/jpeg,image/png,image/webp" @change="handlePostImage" />
         <div v-if="draftImagePreview" class="composer-image-preview">
           <img :src="draftImagePreview" alt="帖子图片预览" />
