@@ -781,6 +781,37 @@ class LegacyLongPostPromotionTests(TestCase):
         self.assertEqual(article.category, "长期用车")
         self.assertGreaterEqual(article.blocks.filter(block_type="heading").count(), 3)
 
+    def test_follow_up_migration_deduplicates_and_splits_existing_article(self):
+        body = "# 21万公里的宝马 M2C\n\n" + ("长期用车真实记录。" * 140)
+        body += "\n\n## 车辆状态\n\n状态记录。"
+        body += "\n\n## 保养维修\n\n维修记录。"
+        body += "\n\n## 改装感受\n\n改装记录。"
+        article = Article.objects.create(
+            title="21万公里的宝马 M2C",
+            slug="existing-m2c-article",
+            body=body,
+        )
+        ArticleBlock.objects.create(article=article, block_type="paragraph", position=0, text=body)
+        image_block = ArticleBlock.objects.create(
+            article=article,
+            block_type="image",
+            position=1,
+            image_upload="article_blocks/m2c.jpg",
+            caption="车辆实拍",
+        )
+        post = Post.objects.create(title="M2", body=body, author="长期车主")
+        migration = importlib.import_module("community.migrations.0020_dedupe_and_split_long_articles")
+
+        migration.dedupe_and_backfill_articles(django_apps, None)
+
+        post.refresh_from_db()
+        image_block.refresh_from_db()
+        self.assertEqual(post.state, "hidden")
+        self.assertEqual(Article.objects.count(), 1)
+        self.assertGreaterEqual(article.blocks.filter(block_type="heading").count(), 3)
+        self.assertEqual(image_block.caption, "车辆实拍")
+        self.assertEqual(image_block.position, article.blocks.count() - 1)
+
 
 class PostInteractionTests(TestCase):
     def setUp(self):
@@ -1024,11 +1055,23 @@ class FrontendInteractionContractTests(SimpleTestCase):
             "articleDraftBlocks",
             'block.type === "image"',
             "article-interaction-panel",
+            "handleArticleBulkImages",
+            "multiple @change=\"handleArticleBulkImages\"",
+            "chooseArticleImagesAfter(index)",
         ]
 
         for pattern in required_patterns:
             with self.subTest(pattern=pattern):
                 self.assertIn(pattern, self.source)
+
+    def test_homepage_lists_titles_without_expanding_article_or_post_bodies(self):
+        homepage = self.source.split('<template v-else-if="activePage === 0">', 1)[1]
+        homepage = homepage.split('<template v-else-if="activePage === 1">', 1)[0]
+
+        self.assertIn("articles[0].title", homepage)
+        self.assertIn("post.title", homepage)
+        self.assertNotIn("articles[0].summary", homepage)
+        self.assertNotIn("post.body", homepage)
 
 
 class PublicUserPrivacyTests(TestCase):

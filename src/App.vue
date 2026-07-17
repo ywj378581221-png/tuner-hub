@@ -149,6 +149,8 @@ const articleComments = ref([]);
 const articleCommentBody = ref("");
 const articleCommentSubmitting = ref(false);
 const articleCoverInput = ref(null);
+const articleBulkImageInput = ref(null);
+const selectedArticleBlockIndex = ref(0);
 const articleCoverFile = ref(null);
 const articleCoverPreview = ref("");
 const articleDraft = ref({ title: "", summary: "", category: "长期用车", car: "", image_caption: "" });
@@ -186,7 +188,7 @@ const routeMessage = computed(() => {
   return inboxMessages.value.find((message) => String(message.id) === String(route.params.id)) || null;
 });
 
-const featuredPost = computed(() => posts.value.find((post) => post.featured) || posts.value[0] || null);
+const featuredPost = computed(() => posts.value.find((post) => post.featured) || null);
 const featuredArticle = computed(() => articles.value.find((article) => article.featured) || articles.value[0] || null);
 const newsArticles = computed(() => articles.value.filter((article) => article.category === "资讯"));
 const reviewArticles = computed(() => articles.value.filter((article) => ["评测", "导购", "视频"].includes(article.category)));
@@ -805,6 +807,7 @@ function removeArticleBlock(index) {
   if (block?.preview?.startsWith("blob:")) URL.revokeObjectURL(block.preview);
   articleDraftBlocks.value.splice(index, 1);
   if (!articleDraftBlocks.value.length) articleDraftBlocks.value.push(articleBlock("paragraph"));
+  selectedArticleBlockIndex.value = Math.min(selectedArticleBlockIndex.value, articleDraftBlocks.value.length - 1);
 }
 
 function moveArticleBlock(index, offset) {
@@ -812,6 +815,7 @@ function moveArticleBlock(index, offset) {
   if (target < 0 || target >= articleDraftBlocks.value.length) return;
   const [block] = articleDraftBlocks.value.splice(index, 1);
   articleDraftBlocks.value.splice(target, 0, block);
+  selectedArticleBlockIndex.value = target;
 }
 
 function validComposerImage(file, label) {
@@ -850,6 +854,42 @@ function handleArticleBlockImage(event, block) {
   block.preview = URL.createObjectURL(file);
 }
 
+function chooseArticleImagesAfter(index) {
+  selectedArticleBlockIndex.value = Math.max(0, Math.min(index, articleDraftBlocks.value.length - 1));
+  articleBulkImageInput.value?.click();
+}
+
+function handleArticleBulkImages(event) {
+  const files = Array.from(event.target.files || []);
+  if (!files.length) return;
+  const existingImages = articleDraftBlocks.value.filter((block) => block.type === "image").length;
+  const available = Math.max(0, Math.min(20 - existingImages, 40 - articleDraftBlocks.value.length));
+  if (!available) {
+    showToast(existingImages >= 20 ? "文章最多添加 20 张正文图片" : "文章最多添加 40 个内容段落");
+    event.target.value = "";
+    return;
+  }
+  const accepted = [];
+  for (const file of files) {
+    if (accepted.length >= available) break;
+    if (validComposerImage(file, "正文图片")) accepted.push(file);
+  }
+  if (files.length > available) showToast(`本次已添加前 ${available} 张图片`);
+  if (!accepted.length) {
+    event.target.value = "";
+    return;
+  }
+  const imageBlocks = accepted.map((file) => ({
+    ...articleBlock("image"),
+    file,
+    preview: URL.createObjectURL(file),
+  }));
+  const insertAt = selectedArticleBlockIndex.value + 1;
+  articleDraftBlocks.value.splice(insertAt, 0, ...imageBlocks);
+  selectedArticleBlockIndex.value = insertAt + imageBlocks.length - 1;
+  event.target.value = "";
+}
+
 function resetArticleDraft() {
   clearArticleCover();
   articleDraftBlocks.value.forEach((block) => {
@@ -857,6 +897,7 @@ function resetArticleDraft() {
   });
   articleDraft.value = { title: "", summary: "", category: "长期用车", car: "", image_caption: "" };
   articleDraftBlocks.value = [articleBlock("paragraph")];
+  selectedArticleBlockIndex.value = 0;
 }
 
 function openAuth(mode = "login") {
@@ -1473,7 +1514,6 @@ async function publishArticle() {
                 <div class="feed-copy">
                   <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><b v-if="post.is_pinned" class="pin-badge">置顶</b><span>{{ post.author }} · {{ post.time }}</span></div>
                   <button class="feed-title" @click="openPost(post)">{{ post.title }}</button>
-                  <p>{{ post.body }}</p>
                   <div v-if="canManageCommunity()" class="admin-actions">
                     <button @click.stop="deleteCommunityPost(post)">删除社区内容</button>
                   </div>
@@ -1529,7 +1569,7 @@ async function publishArticle() {
                 <div class="module-head"><h2>评测与导购</h2><button @click="goTo('/reviews')">更多</button></div>
                 <article v-for="article in selectedCarArticles" :key="article.id" class="article-row compact" @click="goTo(`/articles/${article.id}`)">
                   <img :src="article.image || assets.hero" :alt="article.title" />
-                  <div><span>{{ article.category }}</span><b v-if="article.is_pinned" class="pin-badge">置顶</b><h2>{{ article.title }}</h2><p>{{ article.summary }}</p></div>
+                  <div><span>{{ article.category }}</span><b v-if="article.is_pinned" class="pin-badge">置顶</b><h2>{{ article.title }}</h2></div>
                 </article>
                 <p v-if="!selectedCarArticles.length" class="empty-note">暂无关联文章。</p>
               </div>
@@ -1538,7 +1578,6 @@ async function publishArticle() {
                 <button v-for="post in selectedCarPosts" :key="post.id" class="topic-row" @click="openPost(post)">
                   <strong>{{ post.title }}</strong>
                   <span>{{ post.author }} · {{ post.time }}</span>
-                  <p>{{ post.body }}</p>
                 </button>
                 <p v-if="!selectedCarPosts.length" class="empty-note">暂无车主动态。</p>
               </div>
@@ -1634,12 +1673,10 @@ async function publishArticle() {
               <button v-for="article in savedArticles" :key="`saved-article-${article.id}`" class="topic-row" @click="goTo(`/articles/${article.id}`)">
                 <strong>{{ article.title }}</strong>
                 <span>文章 · {{ article.author }} · {{ article.time }}</span>
-                <p>{{ article.summary }}</p>
               </button>
               <button v-for="post in savedPosts" :key="post.id" class="topic-row" @click="openPost(post)">
                 <strong>{{ post.title }}</strong>
                 <span>帖子 · {{ post.author }} · {{ post.time }}</span>
-                <p>{{ post.body }}</p>
               </button>
               <p v-if="!currentUser" class="empty-note">登录后查看当前账号的收藏。</p>
               <p v-else-if="!savedPosts.length && !savedArticles.length" class="empty-note">还没有收藏内容。</p>
@@ -1686,9 +1723,9 @@ async function publishArticle() {
             </section>
             <section v-if="route.path === '/search'" class="data-panel search-results">
               <div class="module-head"><h2>搜索结果</h2><span>{{ searchResultCount }} 条</span></div>
-              <button v-for="post in searchResults.posts" :key="`post-${post.id}`" class="topic-row" @click="openPost(post)"><strong>{{ post.title }}</strong><span>帖子 · {{ post.author }}</span><p>{{ post.body }}</p></button>
+              <button v-for="post in searchResults.posts" :key="`post-${post.id}`" class="topic-row" @click="openPost(post)"><strong>{{ post.title }}</strong><span>帖子 · {{ post.author }}</span></button>
               <button v-for="car in searchResults.cars" :key="`car-${car.id}`" class="topic-row" @click="goTo(carRoute(car))"><strong>{{ car.name }}</strong><span>车型 · {{ car.tag }}</span><p>{{ car.heat }}</p></button>
-              <button v-for="article in searchResults.articles" :key="`article-${article.id}`" class="topic-row" @click="goTo(`/articles/${article.id}`)"><strong>{{ article.title }}</strong><span>文章 · {{ article.author }}</span><p>{{ article.summary }}</p></button>
+              <button v-for="article in searchResults.articles" :key="`article-${article.id}`" class="topic-row" @click="goTo(`/articles/${article.id}`)"><strong>{{ article.title }}</strong><span>文章 · {{ article.author }}</span></button>
               <button v-for="club in searchResults.clubs" :key="`club-${club[1]}`" class="topic-row" @click="goTo(pathFor('clubs', club[1]))"><strong>{{ club[1] }}</strong><span>车友会 · {{ club[0] }}</span><p>{{ club[2] }}</p></button>
               <button v-for="shop in searchResults.shops" :key="`shop-${shop[1]}`" class="topic-row" @click="goTo(pathFor('shops', shop[1]))"><strong>{{ shop[1] }}</strong><span>店家 · 评分 {{ shop[2] }}</span><p>{{ shop[3] }}</p></button>
               <button v-for="part in searchResults.parts" :key="`part-${part.name}`" class="topic-row" @click="goTo(pathFor('market', part.name))"><strong>{{ part.name }}</strong><span>配件</span><p>{{ part.status }}</p></button>
@@ -1787,7 +1824,6 @@ async function publishArticle() {
                 <div class="feed-copy">
                   <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><b v-if="post.is_pinned" class="pin-badge">置顶</b><span>{{ post.author }} · {{ post.time }}</span></div>
                   <button class="feed-title" @click="openPost(post)">{{ post.title }}</button>
-                  <p>{{ post.body }}</p>
                 </div>
                 <button class="mini-card" @click="openPost(post)">
                   <img v-if="post.image" :src="post.image" alt="" />
@@ -1807,7 +1843,6 @@ async function publishArticle() {
                 <span>{{ articles[0].category }}</span>
                 <b v-if="articles[0].is_pinned" class="pin-badge">置顶</b>
                 <h1>{{ articles[0].title }}</h1>
-                <p>{{ articles[0].summary }}</p>
               </div>
             </article>
             <div class="portal-news-list">
@@ -1828,13 +1863,12 @@ async function publishArticle() {
             <button @click="goTo('/rankings')"><Star :size="20" />排行榜</button>
           </section>
 
-          <section class="home-lead">
+          <section v-if="featuredPost || buyingGuides.length" class="home-lead" :class="{ 'without-featured': !featuredPost }">
             <article v-if="featuredPost" class="lead-story" role="button" tabindex="0" @click="openPost(featuredPost)">
               <img :src="featuredPost.image || assets.supra" :alt="featuredPost.title" />
               <div>
                 <span>编辑精选</span>
                 <h1>{{ featuredPost.title }}</h1>
-                <p>{{ featuredPost.body }}</p>
               </div>
             </article>
             <div class="lead-list">
@@ -1865,24 +1899,17 @@ async function publishArticle() {
           </section>
 
           <section class="feed">
-            <article v-for="post in filteredPosts" :key="post.id" class="feed-item" :class="{ 'without-image': !post.image }">
+            <article v-for="post in filteredPosts" :key="post.id" class="feed-item home-feed-item" :class="{ 'without-image': !post.image }">
               <button v-if="post.image" class="feed-image" @click="openPost(post)"><img :src="post.image" :alt="post.title" /></button>
               <div class="feed-copy">
                 <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><b v-if="post.is_pinned" class="pin-badge">置顶</b><span>{{ post.author }} · {{ post.time }}</span></div>
                 <button class="feed-title" @click="openPost(post)">{{ post.title }}</button>
-                <p>{{ post.body }}</p>
                 <div class="feed-actions">
                   <button @click="toggleSave(post.id)" :class="{ saved: post.is_saved }"><BookmarkSimple :weight="post.is_saved ? 'fill' : 'regular'" :size="17" />{{ post.is_saved ? '已收藏' : '收藏' }}</button>
                   <button @click="openPost(post)"><ChatCircle :size="17" />{{ post.comments }}</button>
                   <button :class="{ liked: post.is_liked }" @click="toggleLike(post)"><Sparkle :weight="post.is_liked ? 'fill' : 'regular'" :size="17" />{{ post.likes }}</button>
                 </div>
               </div>
-              <button class="mini-card" @click="openPost(post)">
-                <img v-if="post.image" :src="post.image" alt="" />
-                <strong>{{ post.car }}</strong>
-                <span>项目进度</span>
-                <div class="progress"><i :style="{ width: post.progress + '%' }"></i></div>
-              </button>
             </article>
             <p v-if="!filteredPosts.length" class="empty-note">暂无社区内容，登录后可以发布第一条帖子。</p>
           </section>
@@ -1963,7 +1990,7 @@ async function publishArticle() {
           <section class="article-section">
             <article v-for="article in reviewArticles" :key="article.id" class="article-row" @click="goTo(`/articles/${article.id}`)">
               <img :src="article.image || assets.hero" :alt="article.title" />
-              <div><span>{{ article.category }}</span><b v-if="article.is_pinned" class="pin-badge">置顶</b><h2>{{ article.title }}</h2><p>{{ article.summary }}</p><small>{{ article.author }} · {{ article.car || '综合' }}</small></div>
+              <div><span>{{ article.category }}</span><b v-if="article.is_pinned" class="pin-badge">置顶</b><h2>{{ article.title }}</h2><small>{{ article.author }} · {{ article.car || '综合' }}</small></div>
             </article>
             <p v-if="!reviewArticles.length" class="empty-note">暂无评测文章。</p>
           </section>
@@ -1995,7 +2022,6 @@ async function publishArticle() {
               <div class="feed-copy">
                 <div class="feed-meta"><span class="pill" :class="post.tone">{{ post.type }}</span><b v-if="post.is_pinned" class="pin-badge">置顶</b><span>{{ post.author }} · {{ post.time }}</span></div>
                 <button class="feed-title" @click="openPost(post)">{{ post.title }}</button>
-                <p>{{ post.body }}</p>
                 <div v-if="canManageCommunity()" class="admin-actions">
                   <button @click.stop="deleteCommunityPost(post)">删除社区内容</button>
                 </div>
@@ -2033,7 +2059,6 @@ async function publishArticle() {
               <button v-for="post in posts.filter((item) => item.type === '二手市场').slice(0, 4)" :key="post.id" class="topic-row" @click="openPost(post)">
                 <strong>{{ post.title }}</strong>
                 <span>{{ post.author }} · {{ post.time }}</span>
-                <p>{{ post.body }}</p>
               </button>
               <p v-if="!posts.filter((item) => item.type === '二手市场').length" class="empty-note">暂无配件讨论。</p>
             </div>
@@ -2209,10 +2234,12 @@ async function publishArticle() {
 
           <section class="article-block-editor">
             <div class="composer-extra-head"><strong>文章正文</strong></div>
-            <article v-for="(block, index) in articleDraftBlocks" :key="block.key" class="article-draft-block">
+            <input ref="articleBulkImageInput" class="composer-image-input" type="file" accept="image/jpeg,image/png,image/webp" multiple @change="handleArticleBulkImages" />
+            <article v-for="(block, index) in articleDraftBlocks" :key="block.key" class="article-draft-block" :class="{ selected: selectedArticleBlockIndex === index }" @click="selectedArticleBlockIndex = index">
               <div class="article-block-head">
                 <span>{{ block.type === 'heading' ? '小标题' : block.type === 'image' ? '图片' : '正文段落' }}</span>
                 <div>
+                  <button class="icon-button" title="在此段后插入图片" @click.stop="chooseArticleImagesAfter(index)"><ImageIcon :size="17" /></button>
                   <button class="icon-button" title="上移" :disabled="index === 0" @click="moveArticleBlock(index, -1)"><ArrowUp :size="17" /></button>
                   <button class="icon-button" title="下移" :disabled="index === articleDraftBlocks.length - 1" @click="moveArticleBlock(index, 1)"><ArrowDown :size="17" /></button>
                   <button class="icon-button" title="删除" @click="removeArticleBlock(index)"><X :size="17" /></button>
@@ -2229,7 +2256,7 @@ async function publishArticle() {
             <div class="article-block-tools">
               <button @click="addArticleBlock('paragraph')"><Plus :size="17" />正文段落</button>
               <button @click="addArticleBlock('heading')"><Plus :size="17" />小标题</button>
-              <button @click="addArticleBlock('image')"><ImageIcon :size="17" />图片</button>
+              <button @click="chooseArticleImagesAfter(selectedArticleBlockIndex)"><ImageIcon :size="17" />插入图片</button>
             </div>
           </section>
           <button class="post-button" :disabled="publishingArticle" @click="publishArticle"><PaperPlaneTilt :size="18" />{{ publishingArticle ? '发布中' : '发布文章' }}</button>

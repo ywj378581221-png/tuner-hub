@@ -809,6 +809,14 @@ button {
   padding: 12px;
 }
 
+.home-lead.without-featured {
+  grid-template-columns: 1fr;
+}
+
+.home-lead.without-featured .lead-list {
+  border-left: 0;
+}
+
 .lead-story {
   display: grid;
   grid-template-columns: 260px minmax(0, 1fr);
@@ -987,6 +995,20 @@ button {
 
 .feed-item.without-image {
   grid-template-columns: minmax(0, 1fr) 230px;
+}
+
+.home-feed-item {
+  min-height: 104px;
+  grid-template-columns: 144px minmax(0, 1fr);
+  align-items: center;
+}
+
+.home-feed-item.without-image {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.home-feed-item .feed-image img {
+  height: 80px;
 }
 
 .feed-actions button.liked,
@@ -2516,6 +2538,11 @@ button {
   border: 1px solid var(--line);
   border-radius: 5px;
   background: #fafafa;
+}
+
+.article-draft-block.selected {
+  border-color: #111;
+  box-shadow: inset 3px 0 0 var(--brand);
 }
 
 .article-block-head {
