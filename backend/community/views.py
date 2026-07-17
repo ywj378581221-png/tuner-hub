@@ -14,6 +14,8 @@ from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.core.validators import validate_email
 from django.contrib.sessions.models import Session
+from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
@@ -21,7 +23,7 @@ from django.utils.cache import patch_vary_headers
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
-from .models import Article, Car, CarTrim, Club, Event, Guide, MarketItem, Post, PrivateMessage, ProjectCarRecord, PublishState, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
+from .models import Article, Car, CarTrim, Club, Event, Guide, MarketItem, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, PublishState, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
 
 
 def with_cors(response, request=None):
@@ -188,7 +190,8 @@ def user_level_points(user, profile=None):
     discussion_total = sum(discussion_points(item.active_actions) for item in activities)
 
     quality_by_day = {}
-    for post in Post.objects.filter(author__in=names, state=PublishState.PUBLISHED):
+    owned_posts = Q(owner=user) | Q(owner__isnull=True, author__in=names)
+    for post in Post.objects.filter(owned_posts, state=PublishState.PUBLISHED):
         day = timezone.localdate(post.created_at)
         quality_by_day[day] = quality_by_day.get(day, 0) + post_quality_points(post)
     quality_total = sum(min(1000, points) for points in quality_by_day.values())
@@ -217,7 +220,8 @@ def user_payload(user):
     if user.first_name and not profile.nickname:
         profile.nickname = user.first_name
         profile.save(update_fields=["nickname"])
-    posts_count = Post.objects.filter(author__in=author_names_for(user, profile)).count()
+    names = author_names_for(user, profile)
+    posts_count = Post.objects.filter(Q(owner=user) | Q(owner__isnull=True, author__in=names)).count()
     followers_count = user.follower_relations.count()
     following_count = user.following_relations.count()
     points = user_level_points(user, profile)
@@ -245,7 +249,12 @@ def user_payload(user):
 
 
 def public_user_payload(user, viewer=None):
-    data = user_payload(user)
+    private_data = user_payload(user)
+    public_fields = (
+        "id", "username", "nickname", "avatar", "level", "level_label",
+        "activity_points", "posts_count", "followers_count", "following_count", "signature",
+    )
+    data = {field: private_data[field] for field in public_fields}
     data["is_following"] = bool(
         viewer
         and viewer.is_authenticated
@@ -315,14 +324,28 @@ def content_image_url(obj):
     return static_asset_url(getattr(obj, "image", ""))
 
 
-def post_payload(post):
+def relative_time_label(created_at):
+    seconds = max(0, int((timezone.now() - created_at).total_seconds()))
+    if seconds < 60:
+        return "刚刚"
+    if seconds < 3600:
+        return f"{seconds // 60} 分钟前"
+    if seconds < 86400:
+        return f"{seconds // 3600} 小时前"
+    if seconds < 604800:
+        return f"{seconds // 86400} 天前"
+    return timezone.localtime(created_at).strftime("%Y-%m-%d")
+
+
+def post_payload(post, saved_ids=None, liked_ids=None):
     return {
         "id": post.id,
         "type": post.post_type,
         "tone": post.tone,
         "image": content_image_url(post),
         "author": post.author,
-        "time": post.time_label,
+        "time": relative_time_label(post.created_at),
+        "created_at": post.created_at.isoformat(),
         "title": post.title,
         "body": post.body,
         "club": post.club.name if post.club else "",
@@ -332,7 +355,22 @@ def post_payload(post):
         "progress": post.progress,
         "specs": post.specs,
         "location": post.location,
+        "is_saved": bool(saved_ids is not None and post.id in saved_ids),
+        "is_liked": bool(liked_ids is not None and post.id in liked_ids),
         "featured": post.featured,
+    }
+
+
+def comment_payload(comment):
+    profile = profile_for(comment.user)
+    return {
+        "id": comment.id,
+        "body": comment.body,
+        "author": profile.nickname or comment.user.first_name or comment.user.username,
+        "username": comment.user.username,
+        "avatar": profile.avatar.url if profile.avatar else "",
+        "time": relative_time_label(comment.created_at),
+        "created_at": comment.created_at.isoformat(),
     }
 
 
@@ -386,16 +424,22 @@ def site_data(request):
     if request.user.is_authenticated:
         record_visit(request.user)
     User = get_user_model()
+    visible_posts = list(public_queryset(Post).select_related("car", "club", "shop", "owner"))
+    saved_ids = set()
+    liked_ids = set()
+    if request.user.is_authenticated:
+        saved_ids = set(PostSave.objects.filter(user=request.user, post__in=visible_posts).values_list("post_id", flat=True))
+        liked_ids = set(PostLike.objects.filter(user=request.user, post__in=visible_posts).values_list("post_id", flat=True))
     data = {
-        "posts": [post_payload(post) for post in public_queryset(Post).select_related("car", "club", "shop")],
+        "posts": [post_payload(post, saved_ids, liked_ids) for post in visible_posts],
         "cars": [car_payload(item) for item in public_queryset(Car).prefetch_related("trims")],
         "trims": [trim_payload(item) for item in public_queryset(CarTrim).select_related("car")],
-        "clubs": [[item.short_name, item.name, item.member_count, item.slug] for item in public_queryset(Club)],
+        "clubs": [[item.short_name, item.name, item.member_count, item.slug, content_image_url(item)] for item in public_queryset(Club)],
         "events": [
             {"img": content_image_url(item), "name": item.name, "meta": item.meta, "count": item.count, "slug": item.slug}
             for item in public_queryset(Event)
         ],
-        "shops": [[item.short_name, item.name, str(item.rating), item.services, item.slug] for item in public_queryset(Shop)],
+        "shops": [[item.short_name, item.name, str(item.rating), item.services, item.slug, content_image_url(item)] for item in public_queryset(Shop)],
         "market": [
             {"img": content_image_url(item), "name": item.name, "status": "配件动态", "slug": item.slug}
             for item in public_queryset(MarketItem)
@@ -404,7 +448,10 @@ def site_data(request):
             {"title": item.title, "count": item.count, "desc": item.desc, "slug": item.slug}
             for item in public_queryset(Topic)
         ],
-        "guides": [item.title for item in public_queryset(Guide)],
+        "guides": [
+            {"id": item.id, "title": item.title, "body": item.body}
+            for item in public_queryset(Guide)
+        ],
         "articles": [article_payload(item) for item in public_queryset(Article).select_related("car")],
         "users": [
             public_user_payload(item, request.user)
@@ -440,16 +487,23 @@ def create_garage_vehicle(request):
     car_id = data.get("car_id")
     car = Car.objects.filter(id=car_id).first() if car_id else None
     custom_name = (data.get("custom_name") or "").strip()
+    year = (data.get("year") or "").strip()
+    color = (data.get("color") or "").strip()
+    mods = (data.get("mods") or "").strip()
     if not car and not custom_name:
         return with_cors(JsonResponse({"error": "请选择车型或输入车辆名称"}, status=400), request)
+    if len(custom_name) > 120 or len(year) > 20 or len(color) > 40:
+        return with_cors(JsonResponse({"error": "车辆信息长度超出限制"}, status=400), request)
+    if len(mods) > 5000:
+        return with_cors(JsonResponse({"error": "改装清单不能超过 5000 个字符"}, status=400), request)
 
     vehicle = UserGarageVehicle.objects.create(
         user=request.user,
         car=car,
         custom_name=custom_name,
-        year=(data.get("year") or "").strip(),
-        color=(data.get("color") or "").strip(),
-        mods=(data.get("mods") or "").strip(),
+        year=year,
+        color=color,
+        mods=mods,
     )
     record_active_action(request.user)
     return with_cors(JsonResponse({"vehicle": garage_vehicle_payload(vehicle)}, json_dumps_params={"ensure_ascii": False}), request)
@@ -473,13 +527,22 @@ def create_project_record(request):
     title = (data.get("title") or "").strip()
     if not title:
         return with_cors(JsonResponse({"error": "请输入记录标题"}, status=400), request)
-    vehicle = UserGarageVehicle.objects.filter(id=data.get("vehicle_id"), user=request.user).first() if data.get("vehicle_id") else None
+    stage = (data.get("stage") or "").strip()
+    content = (data.get("content") or "").strip()
+    if len(title) > 160 or len(stage) > 80:
+        return with_cors(JsonResponse({"error": "项目记录信息长度超出限制"}, status=400), request)
+    if len(content) > 10000:
+        return with_cors(JsonResponse({"error": "记录内容不能超过 10000 个字符"}, status=400), request)
+    vehicle_id = data.get("vehicle_id")
+    vehicle = UserGarageVehicle.objects.filter(id=vehicle_id, user=request.user).first() if vehicle_id else None
+    if vehicle_id and not vehicle:
+        return with_cors(JsonResponse({"error": "关联车辆不存在"}, status=400), request)
     record = ProjectCarRecord.objects.create(
         user=request.user,
         vehicle=vehicle,
         title=title,
-        stage=(data.get("stage") or "").strip(),
-        content=(data.get("content") or "").strip(),
+        stage=stage,
+        content=content,
     )
     record_active_action(request.user)
     return with_cors(JsonResponse({"record": project_record_payload(record)}, json_dumps_params={"ensure_ascii": False}), request)
@@ -616,12 +679,11 @@ def update_profile(request):
         return with_cors(JsonResponse({"error": "昵称包含无效字符"}, status=400), request)
 
     profile = profile_for(request.user)
-    old_names = author_names_for(request.user, profile)
     profile.nickname = nickname
     profile.save(update_fields=["nickname", "updated_at"])
     request.user.first_name = nickname
     request.user.save(update_fields=["first_name"])
-    Post.objects.filter(author__in=old_names).update(author=nickname)
+    Post.objects.filter(owner=request.user).update(author=nickname)
 
     return with_cors(JsonResponse({"user": user_payload(request.user)}, json_dumps_params={"ensure_ascii": False}), request)
 
@@ -845,7 +907,7 @@ def toggle_follow_user(request, user_id):
     return with_cors(JsonResponse({
         "following": created,
         "current_user": user_payload(request.user),
-        "target_user": user_payload(target),
+        "target_user": public_user_payload(target, request.user),
     }, json_dumps_params={"ensure_ascii": False}), request)
 
 
@@ -859,8 +921,38 @@ def private_messages(request):
     blocked = ensure_active_user(request)
     if blocked:
         return blocked
-    messages = PrivateMessage.objects.filter(receiver=request.user).select_related("sender", "receiver")[:50]
-    return with_cors(JsonResponse({"messages": [message_payload(item) for item in messages]}, json_dumps_params={"ensure_ascii": False}), request)
+    messages = PrivateMessage.objects.filter(
+        Q(sender=request.user) | Q(receiver=request.user)
+    ).select_related("sender", "receiver", "sender__profile", "receiver__profile")[:100]
+    unread_count = PrivateMessage.objects.filter(receiver=request.user, is_read=False).count()
+    return with_cors(JsonResponse({
+        "messages": [message_payload(item) for item in messages],
+        "unread_count": unread_count,
+    }, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def mark_private_message_read(request, message_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再查看私信"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    try:
+        message = PrivateMessage.objects.select_related("sender", "receiver").get(id=message_id, receiver=request.user)
+    except PrivateMessage.DoesNotExist:
+        return with_cors(JsonResponse({"error": "私信不存在"}, status=404), request)
+    if not message.is_read:
+        message.is_read = True
+        message.save(update_fields=["is_read", "updated_at"])
+    unread_count = PrivateMessage.objects.filter(receiver=request.user, is_read=False).count()
+    return with_cors(JsonResponse({
+        "message": message_payload(message),
+        "unread_count": unread_count,
+    }, json_dumps_params={"ensure_ascii": False}), request)
 
 
 @csrf_exempt
@@ -884,6 +976,8 @@ def send_private_message(request, user_id):
     body = (data.get("body") or "").strip()
     if not body:
         return with_cors(JsonResponse({"error": "请输入私信内容"}, status=400), request)
+    if len(body) > 2000:
+        return with_cors(JsonResponse({"error": "私信不能超过 2000 个字符"}, status=400), request)
 
     User = get_user_model()
     try:
@@ -923,6 +1017,8 @@ def create_post(request):
         return with_cors(JsonResponse({"error": "标题和正文不能为空"}, status=400), request)
     if len(title) > 180:
         return with_cors(JsonResponse({"error": "标题不能超过 180 个字符"}, status=400), request)
+    if len(body) > 20000:
+        return with_cors(JsonResponse({"error": "正文不能超过 20000 个字符"}, status=400), request)
     if len(location) > 120:
         return with_cors(JsonResponse({"error": "位置不能超过 120 个字符"}, status=400), request)
 
@@ -946,8 +1042,9 @@ def create_post(request):
         body=body,
         post_type=post_type if post_type in tone_map else "改装进度",
         tone=tone_map.get(post_type, "blue"),
-        image="" if post_image else (data.get("image") or "/assets/supra-garage.png"),
+        image="" if post_image else (data.get("image") or ""),
         image_upload=post_image,
+        owner=request.user,
         author=request.user.first_name or request.user.username,
         time_label="刚刚",
         car=car,
@@ -960,6 +1057,108 @@ def create_post(request):
     )
     record_active_action(request.user)
     return with_cors(JsonResponse({"post": post_payload(post)}, json_dumps_params={"ensure_ascii": False}), request)
+
+
+def post_payload_for_viewer(post, user):
+    saved_ids = {post.id} if user.is_authenticated and PostSave.objects.filter(user=user, post=post).exists() else set()
+    liked_ids = {post.id} if user.is_authenticated and PostLike.objects.filter(user=user, post=post).exists() else set()
+    return post_payload(post, saved_ids, liked_ids)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def toggle_post_save(request, post_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再收藏"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    try:
+        post = Post.objects.get(id=post_id, state=PublishState.PUBLISHED)
+    except Post.DoesNotExist:
+        return with_cors(JsonResponse({"error": "帖子不存在"}, status=404), request)
+
+    relation, created = PostSave.objects.get_or_create(user=request.user, post=post)
+    if not created:
+        relation.delete()
+    return with_cors(JsonResponse({
+        "saved": created,
+        "post": post_payload_for_viewer(post, request.user),
+    }, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def toggle_post_like(request, post_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再点赞"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+
+    with transaction.atomic():
+        try:
+            post = Post.objects.select_for_update().get(id=post_id, state=PublishState.PUBLISHED)
+        except Post.DoesNotExist:
+            return with_cors(JsonResponse({"error": "帖子不存在"}, status=404), request)
+        relation, created = PostLike.objects.get_or_create(user=request.user, post=post)
+        if not created:
+            relation.delete()
+        post.likes = PostLike.objects.filter(post=post).count()
+        post.save(update_fields=["likes", "updated_at"])
+
+    record_active_action(request.user)
+    return with_cors(JsonResponse({
+        "liked": created,
+        "post": post_payload_for_viewer(post, request.user),
+    }, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST", "OPTIONS"])
+def post_comments(request, post_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    try:
+        post = Post.objects.get(id=post_id, state=PublishState.PUBLISHED)
+    except Post.DoesNotExist:
+        return with_cors(JsonResponse({"error": "帖子不存在"}, status=404), request)
+
+    if request.method == "GET":
+        comments = PostComment.objects.filter(post=post).select_related("user", "user__profile")[:100]
+        return with_cors(JsonResponse({
+            "comments": [comment_payload(comment) for comment in comments],
+        }, json_dumps_params={"ensure_ascii": False}), request)
+
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再评论"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    try:
+        data = read_json(request)
+    except json.JSONDecodeError:
+        return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+    body = (data.get("body") or "").strip()
+    if not body:
+        return with_cors(JsonResponse({"error": "请输入评论内容"}, status=400), request)
+    if len(body) > 1000:
+        return with_cors(JsonResponse({"error": "评论不能超过 1000 个字符"}, status=400), request)
+
+    with transaction.atomic():
+        post = Post.objects.select_for_update().get(id=post.id)
+        comment = PostComment.objects.create(user=request.user, post=post, body=body)
+        post.comments = PostComment.objects.filter(post=post).count()
+        post.save(update_fields=["comments", "updated_at"])
+    record_active_action(request.user)
+    return with_cors(JsonResponse({
+        "comment": comment_payload(comment),
+        "post": post_payload_for_viewer(post, request.user),
+    }, json_dumps_params={"ensure_ascii": False}), request)
 
 
 @csrf_exempt

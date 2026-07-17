@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import path, re_path
-from community.views import change_password, confirm_password_reset, create_garage_vehicle, create_post, create_project_record, current_user, delete_post, login_user, logout_user, private_messages, register_user, request_password_reset, send_private_message, site_data, toggle_follow_user, update_email, update_profile, upload_avatar
+from community.views import change_password, confirm_password_reset, create_garage_vehicle, create_post, create_project_record, current_user, delete_post, login_user, logout_user, mark_private_message_read, post_comments, private_messages, register_user, request_password_reset, send_private_message, site_data, toggle_follow_user, toggle_post_like, toggle_post_save, update_email, update_profile, upload_avatar
 from tunerhub.views import frontend_app
 
 urlpatterns = [
@@ -36,7 +36,11 @@ urlpatterns = [
     path('api/users/<int:user_id>/follow/', toggle_follow_user, name='toggle-follow-user'),
     path('api/users/<int:user_id>/message/', send_private_message, name='send-private-message'),
     path('api/messages/', private_messages, name='private-messages'),
+    path('api/messages/<int:message_id>/read/', mark_private_message_read, name='mark-private-message-read'),
     path('api/posts/create/', create_post, name='create-post'),
+    path('api/posts/<int:post_id>/save/', toggle_post_save, name='toggle-post-save'),
+    path('api/posts/<int:post_id>/like/', toggle_post_like, name='toggle-post-like'),
+    path('api/posts/<int:post_id>/comments/', post_comments, name='post-comments'),
     path('api/posts/<int:post_id>/delete/', delete_post, name='delete-post'),
     path('api/garage/create/', create_garage_vehicle, name='create-garage-vehicle'),
     path('api/projects/create/', create_project_record, name='create-project-record'),

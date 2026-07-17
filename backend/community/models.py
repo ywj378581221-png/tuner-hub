@@ -207,6 +207,7 @@ class Post(TimeStampedModel):
     tone = models.CharField("颜色标识", max_length=20, default="blue")
     image = models.CharField("图片地址", max_length=300, blank=True)
     image_upload = models.FileField("上传图片", upload_to="posts/", blank=True)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="发布用户", related_name="community_posts", on_delete=models.SET_NULL, null=True, blank=True)
     author = models.CharField("作者", max_length=120, blank=True)
     time_label = models.CharField("时间显示", max_length=80, blank=True)
     car = models.ForeignKey(Car, verbose_name="关联车型", on_delete=models.SET_NULL, null=True, blank=True)
@@ -227,6 +228,48 @@ class Post(TimeStampedModel):
 
     def __str__(self):
         return self.title
+
+
+class PostSave(TimeStampedModel):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="用户", related_name="saved_posts", on_delete=models.CASCADE)
+    post = models.ForeignKey(Post, verbose_name="帖子", related_name="saves", on_delete=models.CASCADE)
+
+    class Meta:
+        verbose_name = "帖子收藏"
+        verbose_name_plural = "帖子收藏"
+        constraints = [models.UniqueConstraint(fields=("user", "post"), name="unique_user_post_save")]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user} 收藏 {self.post}"
+
+
+class PostLike(TimeStampedModel):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="用户", related_name="liked_posts", on_delete=models.CASCADE)
+    post = models.ForeignKey(Post, verbose_name="帖子", related_name="like_relations", on_delete=models.CASCADE)
+
+    class Meta:
+        verbose_name = "帖子点赞"
+        verbose_name_plural = "帖子点赞"
+        constraints = [models.UniqueConstraint(fields=("user", "post"), name="unique_user_post_like")]
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user} 点赞 {self.post}"
+
+
+class PostComment(TimeStampedModel):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="用户", related_name="post_comments", on_delete=models.CASCADE)
+    post = models.ForeignKey(Post, verbose_name="帖子", related_name="comment_records", on_delete=models.CASCADE)
+    body = models.TextField("评论内容")
+
+    class Meta:
+        verbose_name = "帖子评论"
+        verbose_name_plural = "帖子评论"
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.user}: {self.body[:24]}"
 
 
 class Event(TimeStampedModel):

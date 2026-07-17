@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils import timezone
 from django.utils.html import format_html
-from .models import Article, Car, CarTrim, Club, Event, Guide, MarketItem, Post, PrivateMessage, ProjectCarRecord, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
+from .models import Article, Car, CarTrim, Club, Event, Guide, MarketItem, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
 from .views import user_level_points
 
 
@@ -124,11 +124,32 @@ class PrivateMessageAdmin(admin.ModelAdmin):
 
 @admin.register(Post)
 class PostAdmin(ImageUploadAdminMixin, admin.ModelAdmin):
-    list_display = ("title", "post_type", "author", "car", "club", "featured", "state", "created_at")
+    list_display = ("title", "post_type", "owner", "author", "car", "club", "featured", "state", "created_at")
     list_filter = ("post_type", "featured", "state", "created_at")
     search_fields = ("title", "body", "author")
     list_editable = ("featured", "state")
-    fields = ("title", "body", "post_type", "tone", "image_upload", "image_preview", "image", "author", "time_label", "car", "club", "shop", "location", "likes", "comments", "progress", "specs", "featured", "state")
+    fields = ("title", "body", "post_type", "tone", "image_upload", "image_preview", "image", "owner", "author", "time_label", "car", "club", "shop", "location", "likes", "comments", "progress", "specs", "featured", "state")
+
+
+@admin.register(PostSave)
+class PostSaveAdmin(admin.ModelAdmin):
+    list_display = ("user", "post", "created_at")
+    search_fields = ("user__username", "post__title")
+    autocomplete_fields = ("user", "post")
+
+
+@admin.register(PostLike)
+class PostLikeAdmin(admin.ModelAdmin):
+    list_display = ("user", "post", "created_at")
+    search_fields = ("user__username", "post__title")
+    autocomplete_fields = ("user", "post")
+
+
+@admin.register(PostComment)
+class PostCommentAdmin(admin.ModelAdmin):
+    list_display = ("user", "post", "created_at")
+    search_fields = ("user__username", "post__title", "body")
+    autocomplete_fields = ("user", "post")
 
 
 @admin.register(Car)

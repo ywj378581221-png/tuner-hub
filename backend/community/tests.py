@@ -1,18 +1,20 @@
 import base64
 import json
 import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
 from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
-from .models import Post, UserProfile
+from .models import Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, UserGarageVehicle, UserProfile
 
 
 class UpdateProfileTests(TestCase):
@@ -34,7 +36,7 @@ class UpdateProfileTests(TestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_updates_nickname_and_existing_post_author(self):
-        Post.objects.create(title="M2C 分享", body="改装记录", author="旧昵称")
+        Post.objects.create(title="M2C 分享", body="改装记录", owner=self.user, author="旧昵称")
         self.client.force_login(self.user)
 
         response = self.client.post(
@@ -495,6 +497,7 @@ class PostImageUploadTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         post = Post.objects.get()
+        self.assertEqual(post.owner, self.user)
         self.assertTrue(post.image_upload.name.startswith("posts/"))
         self.assertEqual(post.specs, ["轮毂: 18x9.5J", "动力: 450 hp"])
         self.assertEqual(post.location, "上海国际赛车场")
@@ -551,3 +554,268 @@ class PostImageUploadTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"], "最多添加 8 项参数")
         self.assertEqual(Post.objects.count(), 0)
+
+
+class PostInteractionTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.owner = User.objects.create_user(username="owner", password="OwnerPass2026!")
+        self.viewer = User.objects.create_user(username="viewer", password="ViewerPass2026!")
+        self.post = Post.objects.create(
+            owner=self.owner,
+            author="owner",
+            title="真实交互测试",
+            body="用于验证收藏、点赞和评论会写入数据库。",
+        )
+        self.client.force_login(self.viewer)
+
+    def test_save_toggle_is_persisted_and_user_scoped(self):
+        response = self.client.post(f"/api/posts/{self.post.id}/save/", data="{}", content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["saved"])
+        self.assertTrue(PostSave.objects.filter(user=self.viewer, post=self.post).exists())
+        self.assertTrue(response.json()["post"]["is_saved"])
+
+        response = self.client.post(f"/api/posts/{self.post.id}/save/", data="{}", content_type="application/json")
+        self.assertFalse(response.json()["saved"])
+        self.assertFalse(PostSave.objects.exists())
+
+    def test_like_toggle_updates_real_count(self):
+        response = self.client.post(f"/api/posts/{self.post.id}/like/", data="{}", content_type="application/json")
+
+        self.post.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["liked"])
+        self.assertEqual(self.post.likes, 1)
+        self.assertEqual(PostLike.objects.filter(post=self.post).count(), 1)
+
+        response = self.client.post(f"/api/posts/{self.post.id}/like/", data="{}", content_type="application/json")
+        self.post.refresh_from_db()
+        self.assertFalse(response.json()["liked"])
+        self.assertEqual(self.post.likes, 0)
+
+    def test_comment_creation_and_public_listing(self):
+        response = self.client.post(
+            f"/api/posts/{self.post.id}/comments/",
+            data=json.dumps({"body": "这条评论需要真实保存。"}),
+            content_type="application/json",
+        )
+
+        self.post.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.post.comments, 1)
+        self.assertEqual(PostComment.objects.get().body, "这条评论需要真实保存。")
+
+        self.client.logout()
+        response = self.client.get(f"/api/posts/{self.post.id}/comments/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["comments"][0]["body"], "这条评论需要真实保存。")
+
+    def test_anonymous_user_cannot_mutate_post_interactions(self):
+        self.client.logout()
+
+        self.assertEqual(self.client.post(f"/api/posts/{self.post.id}/save/").status_code, 401)
+        self.assertEqual(self.client.post(f"/api/posts/{self.post.id}/like/").status_code, 401)
+        self.assertEqual(self.client.post(f"/api/posts/{self.post.id}/comments/", data="{}", content_type="application/json").status_code, 401)
+
+
+class PrivateMessageFlowTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="message_user", password="MessagePass2026!")
+        self.other = User.objects.create_user(username="message_other", password="MessagePass2026!")
+        self.received = PrivateMessage.objects.create(sender=self.other, receiver=self.user, body="收到的未读消息")
+        self.sent = PrivateMessage.objects.create(sender=self.user, receiver=self.other, body="已发送消息")
+        self.client.force_login(self.user)
+
+    def test_message_list_contains_sent_and_received_with_unread_count(self):
+        response = self.client.get("/api/messages/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({item["id"] for item in response.json()["messages"]}, {self.received.id, self.sent.id})
+        self.assertEqual(response.json()["unread_count"], 1)
+
+    def test_receiver_can_mark_message_read(self):
+        response = self.client.post(f"/api/messages/{self.received.id}/read/", data="{}", content_type="application/json")
+
+        self.received.refresh_from_db()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(self.received.is_read)
+        self.assertEqual(response.json()["unread_count"], 0)
+
+    def test_sender_cannot_mark_own_sent_message_as_read(self):
+        response = self.client.post(f"/api/messages/{self.sent.id}/read/", data="{}", content_type="application/json")
+
+        self.assertEqual(response.status_code, 404)
+        self.sent.refresh_from_db()
+        self.assertFalse(self.sent.is_read)
+
+    def test_sent_message_is_returned_after_refresh(self):
+        response = self.client.post(
+            f"/api/users/{self.other.id}/message/",
+            data=json.dumps({"body": "新发送的真实私信"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        list_response = self.client.get("/api/messages/")
+        self.assertIn("新发送的真实私信", [item["body"] for item in list_response.json()["messages"]])
+
+
+class UserContentBoundaryTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="garage_user", password="GaragePass2026!")
+        self.other = User.objects.create_user(username="garage_other", password="GaragePass2026!")
+        self.other_vehicle = UserGarageVehicle.objects.create(user=self.other, custom_name="他人的车辆")
+        self.client.force_login(self.user)
+
+    def test_project_record_cannot_attach_another_users_vehicle(self):
+        response = self.client.post(
+            "/api/projects/create/",
+            data=json.dumps({"vehicle_id": self.other_vehicle.id, "title": "越权关联"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "关联车辆不存在")
+        self.assertEqual(ProjectCarRecord.objects.count(), 0)
+
+    def test_garage_rejects_oversized_vehicle_name(self):
+        response = self.client.post(
+            "/api/garage/create/",
+            data=json.dumps({"custom_name": "M" * 121}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "车辆信息长度超出限制")
+
+    def test_garage_and_project_record_persist_in_site_data(self):
+        vehicle_response = self.client.post(
+            "/api/garage/create/",
+            data=json.dumps({"custom_name": "我的 M2C", "year": "2020", "color": "蓝色", "mods": "避震与刹车"}),
+            content_type="application/json",
+        )
+        vehicle_id = vehicle_response.json()["vehicle"]["id"]
+        record_response = self.client.post(
+            "/api/projects/create/",
+            data=json.dumps({"vehicle_id": vehicle_id, "title": "第一阶段", "stage": "底盘", "content": "完成避震安装"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(vehicle_response.status_code, 200)
+        self.assertEqual(record_response.status_code, 200)
+        site_response = self.client.get("/api/site-data/")
+        self.assertEqual(site_response.json()["garage"][0]["name"], "我的 M2C")
+        self.assertEqual(site_response.json()["projects"][0]["title"], "第一阶段")
+
+
+class FollowAndModerationTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(username="follow_user", password="FollowPass2026!")
+        self.target = User.objects.create_user(username="follow_target", password="FollowPass2026!")
+        self.post = Post.objects.create(owner=self.target, author="follow_target", title="管理测试", body="真实内容")
+        self.client.force_login(self.user)
+
+    def test_follow_counts_update_from_database(self):
+        response = self.client.post(f"/api/users/{self.target.id}/follow/", data="{}", content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["current_user"]["following_count"], 1)
+        self.assertEqual(response.json()["target_user"]["followers_count"], 1)
+
+    def test_regular_user_cannot_delete_post(self):
+        response = self.client.post(f"/api/posts/{self.post.id}/delete/", data="{}", content_type="application/json")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(Post.objects.filter(id=self.post.id).exists())
+
+    def test_staff_user_can_delete_post(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff"])
+
+        response = self.client.post(f"/api/posts/{self.post.id}/delete/", data="{}", content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Post.objects.filter(id=self.post.id).exists())
+
+
+class FrontendInteractionContractTests(SimpleTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        app_path = Path(settings.BASE_DIR).parent / "src" / "App.vue"
+        cls.source = app_path.read_text(encoding="utf-8-sig")
+
+    def test_public_controls_do_not_use_known_placeholder_routes(self):
+        forbidden_patterns = [
+            "/create/project-car",
+            "pathFor('feed'",
+            "#likes",
+            "toggleSave(post.id); goTo('/saved')",
+            "goTo('/settings/shortcuts')",
+        ]
+
+        for pattern in forbidden_patterns:
+            with self.subTest(pattern=pattern):
+                self.assertNotIn(pattern, self.source)
+
+    def test_post_and_message_controls_call_real_apis(self):
+        required_patterns = [
+            "/save/",
+            "/like/",
+            "/comments/",
+            "/read/",
+            "unreadMessageCount",
+        ]
+
+        for pattern in required_patterns:
+            with self.subTest(pattern=pattern):
+                self.assertIn(pattern, self.source)
+
+
+class PublicUserPrivacyTests(TestCase):
+    def test_site_data_never_exposes_other_users_email(self):
+        get_user_model().objects.create_user(
+            username="public_profile",
+            email="private@example.com",
+            password="PrivacyPass2026!",
+        )
+
+        response = self.client.get("/api/site-data/")
+
+        self.assertEqual(response.status_code, 200)
+        public_user = next(item for item in response.json()["users"] if item["username"] == "public_profile")
+        self.assertNotIn("email", public_user)
+        self.assertNotIn("is_staff", public_user)
+        self.assertNotIn("banned_reason", public_user)
+
+    def test_follow_response_does_not_expose_target_email(self):
+        User = get_user_model()
+        viewer = User.objects.create_user(username="privacy_viewer", password="PrivacyPass2026!")
+        target = User.objects.create_user(username="privacy_target", email="target-private@example.com", password="PrivacyPass2026!")
+        self.client.force_login(viewer)
+
+        response = self.client.post(f"/api/users/{target.id}/follow/", data="{}", content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("email", response.json()["target_user"])
+
+
+class FrontendRouteSmokeTests(SimpleTestCase):
+    def test_all_public_root_routes_render_frontend(self):
+        routes = [
+            "/", "/cars", "/reviews", "/community", "/market", "/rankings",
+            "/garage", "/projects", "/profile", "/saved", "/messages",
+            "/notifications", "/topics", "/events", "/clubs", "/shops",
+            "/search", "/create", "/create/photos", "/create/specs", "/create/location",
+        ]
+
+        for route in routes:
+            with self.subTest(route=route):
+                response = self.client.get(route)
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "Tuner Hub")
