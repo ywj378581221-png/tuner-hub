@@ -1490,7 +1490,7 @@ button {
 }
 
 .article-interaction-panel {
-  width: min(100%, 920px);
+  width: min(100%, 820px);
   max-width: none;
   box-sizing: border-box;
   gap: 20px;
