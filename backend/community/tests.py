@@ -16,7 +16,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
-from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, UserGarageVehicle, UserProfile
+from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, ContentReport, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, UserGarageVehicle, UserProfile
 
 
 class UpdateProfileTests(TestCase):
@@ -235,6 +235,22 @@ class PasswordResetTests(TestCase):
 
 
 class RegistrationEmailTests(TestCase):
+    def test_requires_terms_acceptance(self):
+        response = self.client.post(
+            "/api/auth/register/",
+            data=json.dumps({
+                "username": "new_owner",
+                "nickname": "新车主",
+                "password": "SecureRegister2026!",
+                "email": "new-owner@example.com",
+                "accepted_terms": False,
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"], "请先同意用户协议和隐私政策")
+
     def test_requires_email(self):
         response = self.client.post(
             "/api/auth/register/",
@@ -278,12 +294,62 @@ class RegistrationEmailTests(TestCase):
                 "nickname": "新车主",
                 "password": "SecureRegister2026!",
                 "email": "OWNER@example.com",
+                "accepted_terms": True,
             }),
             content_type="application/json",
         )
 
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.json()["error"], "该邮箱已绑定其他账号")
+
+
+class ContentReportTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username="reporter", password="ReportPass2026!")
+        self.article = Article.objects.create(title="待检查文章", slug="reported-article", body="真实文章内容")
+
+    def test_logged_in_user_can_report_article_once(self):
+        self.client.force_login(self.user)
+        payload = {
+            "target_type": "article",
+            "target_id": self.article.id,
+            "reason": "不实或误导",
+            "detail": "文中数据需要管理员核实",
+        }
+
+        response = self.client.post("/api/reports/create/", data=json.dumps(payload), content_type="application/json")
+        duplicate = self.client.post("/api/reports/create/", data=json.dumps(payload), content_type="application/json")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(duplicate.status_code, 409)
+        report = ContentReport.objects.get()
+        self.assertEqual(report.reporter, self.user)
+        self.assertEqual(report.target_title, self.article.title)
+        self.assertEqual(report.status, "pending")
+
+    def test_anonymous_user_cannot_report(self):
+        response = self.client.post(
+            "/api/reports/create/",
+            data=json.dumps({"target_type": "article", "target_id": self.article.id, "reason": "其他"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(ContentReport.objects.count(), 0)
+
+    def test_hidden_or_missing_content_cannot_be_reported(self):
+        self.client.force_login(self.user)
+        self.article.state = "hidden"
+        self.article.save(update_fields=["state"])
+
+        response = self.client.post(
+            "/api/reports/create/",
+            data=json.dumps({"target_type": "article", "target_id": self.article.id, "reason": "其他"}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(ContentReport.objects.count(), 0)
 
 
 class UpdateEmailTests(TestCase):

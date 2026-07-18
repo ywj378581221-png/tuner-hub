@@ -444,6 +444,45 @@ class ArticleComment(TimeStampedModel):
         return f"{self.user}: {self.body[:24]}"
 
 
+class ContentReport(TimeStampedModel):
+    TARGET_CHOICES = [
+        ("article", "文章"),
+        ("post", "动态"),
+    ]
+    REASON_CHOICES = [
+        ("不实或误导", "不实或误导"),
+        ("广告或诈骗", "广告或诈骗"),
+        ("侵权或盗用", "侵权或盗用"),
+        ("辱骂或骚扰", "辱骂或骚扰"),
+        ("危险或违法内容", "危险或违法内容"),
+        ("其他", "其他"),
+    ]
+    STATUS_CHOICES = [
+        ("pending", "待处理"),
+        ("resolved", "已处理"),
+        ("dismissed", "不予处理"),
+    ]
+
+    reporter = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="举报用户", related_name="content_reports", on_delete=models.CASCADE)
+    target_type = models.CharField("内容类型", max_length=20, choices=TARGET_CHOICES)
+    target_id = models.PositiveIntegerField("内容编号")
+    target_title = models.CharField("内容标题", max_length=180)
+    reason = models.CharField("举报原因", max_length=30, choices=REASON_CHOICES)
+    detail = models.TextField("补充说明", blank=True)
+    status = models.CharField("处理状态", max_length=20, choices=STATUS_CHOICES, default="pending")
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, verbose_name="处理管理员", related_name="reviewed_content_reports", on_delete=models.SET_NULL, null=True, blank=True)
+    reviewed_at = models.DateTimeField("处理时间", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "内容举报"
+        verbose_name_plural = "内容举报"
+        ordering = ["-created_at"]
+        constraints = [models.UniqueConstraint(fields=("reporter", "target_type", "target_id"), name="unique_user_content_report")]
+
+    def __str__(self):
+        return f"{self.reporter} 举报 {self.target_title}"
+
+
 class DealerOffer(TimeStampedModel):
     dealer_name = models.CharField("经销商名称", max_length=140)
     city = models.CharField("城市", max_length=80, blank=True)

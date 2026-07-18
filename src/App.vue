@@ -11,12 +11,14 @@ import {
   PhCheckCircle as CheckCircle,
   PhCompass as Compass,
   PhFunnel as Funnel,
+  PhFlag as Flag,
   PhGauge as Gauge,
   PhHouse as House,
   PhImage as ImageIcon,
   PhList as List,
   PhMagnifyingGlass as MagnifyingGlass,
   PhMapPin as MapPin,
+  PhDotsThreeVertical as DotsThreeVertical,
   PhPaperPlaneTilt as PaperPlaneTilt,
   PhPlus as Plus,
   PhSlidersHorizontal as SlidersHorizontal,
@@ -45,11 +47,9 @@ const assets = {
 
 const defaultAvatar = `data:image/svg+xml;charset=UTF-8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="0 0 120 120"><rect width="120" height="120" fill="#eeeeee"/><text x="60" y="69" text-anchor="middle" font-family="Arial,sans-serif" font-size="34" font-weight="700" fill="#333333">TH</text></svg>')}`;
 const fallbackImage = assetPath("car-jdm.jpg");
-const navItems = ["首页", "选车", "评测", "车友圈", "配件专区", "排行榜"];
+const navItems = ["首页", "选车", "文章", "车友圈", "配件专区", "排行榜"];
 const navIcons = [House, Compass, Gauge, ChatCircle, Wrench, Star];
 const routePaths = ["/", "/cars", "/reviews", "/community", "/market", "/rankings"];
-const channelTabs = ["推荐", "选车", "评测", "车友圈", "配件专区", "排行榜"];
-const channelRoutes = ["/", "/cars", "/reviews", "/community", "/market", "/rankings"];
 const feedFilters = ["全部", "聊车", "改装进度", "聚会", "店家施工", "二手市场"];
 const driveFilters = ["全部驱动", "前置后驱", "全时四驱", "ATTESA 四驱"];
 const quickLinks = [
@@ -57,10 +57,49 @@ const quickLinks = [
   ["项目车记录", "/projects"],
   ["收藏内容", "/saved"],
   ["活动日历", "/events"],
-  ["热门车型", "/cars"],
-  ["配件专区", "/market"],
-  ["内容榜单", "/rankings"],
 ];
+
+const publicInfoPages = {
+  "/terms": {
+    title: "用户协议",
+    intro: "注册或使用 Tuner Hub，即表示你同意遵守以下基本规则。",
+    sections: [
+      ["真实使用", "请使用真实、合法的信息参与交流，不冒充他人，不批量注册或滥用账号。"],
+      ["内容责任", "发布者应确保文字、图片和改装信息拥有合法来源，不侵犯他人的隐私、肖像、商标或著作权。"],
+      ["安全边界", "禁止发布危险驾驶教学、违法改装交易、诈骗、骚扰及其他违反法律法规的内容。"],
+      ["社区管理", "平台可以对违规内容采取隐藏、删除、限制发布或封禁账号等措施，并保留必要的操作记录。"],
+    ],
+  },
+  "/privacy": {
+    title: "隐私政策",
+    intro: "Tuner Hub 只收集提供账号和社区功能所必需的信息。",
+    sections: [
+      ["账号信息", "注册时保存账号、昵称、邮箱和加密后的密码；邮箱仅用于账号识别和密码找回。"],
+      ["用户内容", "你主动发布的文章、动态、图片、评论、车库和项目记录会按照对应页面的可见范围保存。"],
+      ["安全记录", "为防止暴力登录和滥用，服务器会保留必要的会话、访问和安全日志。"],
+      ["账号权利", "你可以在个人设置中修改头像、昵称、邮箱和密码，也可以联系管理员处理账号和已发布内容。"],
+    ],
+  },
+  "/community-rules": {
+    title: "社区规范",
+    intro: "这里欢迎真实的长期用车、改装过程和经验交流。",
+    sections: [
+      ["值得分享", "真实车况、维护记录、改装理由、安装过程、使用感受和踩坑经验。"],
+      ["需要说明", "涉及道路测试、性能数据和改装建议时，请交代车辆状态、测试条件和安全边界。"],
+      ["不应发布", "人身攻击、引战、广告刷屏、虚假交易、盗图洗稿、泄露隐私及鼓励危险驾驶的内容。"],
+      ["发现问题", "可以在文章或动态详情页点击举报，管理员会在后台查看并处理。"],
+    ],
+  },
+  "/contact": {
+    title: "联系平台",
+    intro: "账号、内容和安全问题可以通过站内方式联系 Tuner Hub。",
+    sections: [
+      ["站内联系", "登录后向管理员账号 THhub 发送私信，并说明问题页面和处理诉求。"],
+      ["内容举报", "文章或动态详情页提供举报入口，请选择原因并补充必要说明。"],
+      ["紧急安全问题", "涉及账号被盗或个人信息泄露时，请立即修改密码并联系管理员。"],
+    ],
+  },
+};
 
 const posts = ref([]);
 
@@ -105,7 +144,6 @@ const projectRecords = ref([]);
 const route = useRoute();
 const router = useRouter();
 const query = ref("");
-const activeTab = ref(0);
 const activeFilter = ref(0);
 const saved = ref(new Set());
 const showComposer = ref(false);
@@ -114,9 +152,14 @@ const showAuthModal = ref(false);
 const showMessageModal = ref(false);
 const showGarageModal = ref(false);
 const showProjectModal = ref(false);
+const showReportModal = ref(false);
+const showArticleAdminActions = ref(false);
 const authMode = ref("login");
 const authMessage = ref("");
-const authForm = ref({ username: "", password: "", email: "", nickname: "" });
+const authForm = ref({ username: "", password: "", email: "", nickname: "", accepted_terms: false });
+const reportTarget = ref(null);
+const reportForm = ref({ reason: "不实或误导", detail: "" });
+const reportSubmitting = ref(false);
 const resetForm = ref({ email: "", uid: "", token: "", new_password: "", confirm_password: "" });
 const currentUser = ref(null);
 const nicknameDraft = ref("");
@@ -181,7 +224,10 @@ const savedArticles = computed(() => articles.value.filter((article) => article.
 
 const unreadMessages = computed(() => inboxMessages.value.filter((message) => message.receiver.id === currentUser.value?.id && !message.is_read));
 
-const isFunctionalListPage = computed(() => ["/garage", "/projects", "/profile", "/saved", "/notifications", "/search", "/topics", "/events", "/clubs", "/shops"].includes(route.path) || route.path.startsWith("/messages"));
+const isFunctionalListPage = computed(() => [
+  "/garage", "/projects", "/profile", "/saved", "/notifications", "/search", "/topics", "/events", "/clubs", "/shops",
+  "/terms", "/privacy", "/community-rules", "/contact",
+].includes(route.path) || route.path.startsWith("/messages"));
 
 const routeMessage = computed(() => {
   if (!route.path.startsWith("/messages/") || !route.params.id) return null;
@@ -189,9 +235,8 @@ const routeMessage = computed(() => {
 });
 
 const featuredPost = computed(() => posts.value.find((post) => post.featured) || null);
-const featuredArticle = computed(() => articles.value.find((article) => article.featured) || articles.value[0] || null);
-const newsArticles = computed(() => articles.value.filter((article) => article.category === "资讯"));
-const reviewArticles = computed(() => articles.value.filter((article) => ["评测", "导购", "视频"].includes(article.category)));
+const reviewArticles = computed(() => articles.value.filter((article) => article.category !== "资讯"));
+const hasRankingActivity = computed(() => posts.value.length > 0);
 const displayUser = computed(() => currentUser.value || {
   username: "未登录",
   nickname: "游客",
@@ -203,6 +248,8 @@ const displayUser = computed(() => currentUser.value || {
   signature: "登录后查看真实账号数据",
 });
 const avatarSrc = computed(() => mediaUrl(displayUser.value.avatar) || defaultAvatar);
+const displayLevelNumber = computed(() => String(displayUser.value.level_label || "0").replace(/^Lv\.?/i, "") || "0");
+const publicInfoPage = computed(() => publicInfoPages[route.path] || null);
 const authTitle = computed(() => ({
   login: "登录 Tuner Hub",
   register: "注册 Tuner Hub",
@@ -459,6 +506,10 @@ const routeDetail = computed(() => {
     "/clubs": ["车友会广场", "浏览活跃车友会、成员项目车、活动和热门帖子。"],
     "/profile": ["个人中心", "管理账号资料、头像、车库、收藏和发布内容。"],
     "/admin-guide": ["内容管理说明", "管理员可以维护社区内容，普通用户看到的都是已发布内容。"],
+    "/terms": ["用户协议", "使用 Tuner Hub 前请了解账号、内容和社区管理规则。"],
+    "/privacy": ["隐私政策", "了解账号信息、用户内容和安全记录的使用方式。"],
+    "/community-rules": ["社区规范", "真实分享、理性交流，并尊重安全与他人权利。"],
+    "/contact": ["联系平台", "通过站内私信和内容举报联系 Tuner Hub 管理员。"],
     "/create": ["发布内容", "选择内容类型，分享聊车动态、改装记录、聚会活动或二手件信息。"],
     "/messages/sent": ["消息已发送", "对方收到后会出现在私信记录中。"],
     "/notifications/clear": ["清空通知", "通知清空后将不再显示在列表中。"],
@@ -701,6 +752,11 @@ function goTo(path) {
   menuOpen.value = false;
 }
 
+function submitSearch() {
+  if (!query.value.trim()) return;
+  goTo("/search");
+}
+
 async function openPost(post) {
   if (!post) return;
   goTo(`/post/${post.id}`);
@@ -711,6 +767,11 @@ function openComposer(mode = "post") {
   composerMode.value = mode;
   goTo("/create");
   showComposer.value = true;
+}
+
+function openPostComposerForType(type) {
+  draftType.value = type;
+  openComposer("post");
 }
 
 function openArticleComposer(car = null) {
@@ -951,6 +1012,10 @@ async function submitAuth() {
     } catch (error) {
       authMessage.value = error.message;
     }
+    return;
+  }
+  if (authMode.value === "register" && !authForm.value.accepted_terms) {
+    authMessage.value = "请先阅读并同意用户协议和隐私政策";
     return;
   }
   try {
@@ -1284,6 +1349,7 @@ async function sendMessage() {
 
 async function deleteCommunityPost(post) {
   if (!post || !canManageCommunity()) return;
+  if (!window.confirm(`确定删除“${post.title}”吗？此操作无法撤销。`)) return;
   try {
     await apiFetch(`/api/posts/${post.id}/delete/`, {
       method: "POST",
@@ -1299,6 +1365,8 @@ async function deleteCommunityPost(post) {
 
 async function deleteCommunityArticle(article) {
   if (!article || !canManageCommunity()) return;
+  showArticleAdminActions.value = false;
+  if (!window.confirm(`确定删除文章“${article.title}”吗？此操作无法撤销。`)) return;
   try {
     await apiFetch(`/api/articles/${article.id}/delete/`, { method: "POST", body: "{}" });
     articles.value = articles.value.filter((item) => item.id !== article.id);
@@ -1306,6 +1374,39 @@ async function deleteCommunityArticle(article) {
     if (route.path === `/articles/${article.id}`) goTo("/");
   } catch (error) {
     showToast(error.message);
+  }
+}
+
+function openContentReport(targetType, target) {
+  if (!currentUser.value) {
+    openAuth("login");
+    authMessage.value = "请先登录再提交举报";
+    return;
+  }
+  reportTarget.value = { type: targetType, id: target.id, title: target.title };
+  reportForm.value = { reason: "不实或误导", detail: "" };
+  showReportModal.value = true;
+}
+
+async function submitContentReport() {
+  if (!reportTarget.value || reportSubmitting.value) return;
+  reportSubmitting.value = true;
+  try {
+    await apiFetch("/api/reports/create/", {
+      method: "POST",
+      body: JSON.stringify({
+        target_type: reportTarget.value.type,
+        target_id: reportTarget.value.id,
+        reason: reportForm.value.reason,
+        detail: reportForm.value.detail.trim(),
+      }),
+    });
+    showReportModal.value = false;
+    showToast("举报已提交，管理员会尽快处理");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    reportSubmitting.value = false;
   }
 }
 
@@ -1456,10 +1557,10 @@ async function publishArticle() {
         <span class="brand-name">Tuner Hub</span>
       </button>
 
-      <label class="search">
-        <MagnifyingGlass :size="18" />
-        <input v-model="query" placeholder="搜索车型、改装方案、车友会、店家" @keyup.enter="goTo('/search')" />
-      </label>
+      <form class="search" role="search" @submit.prevent="submitSearch">
+        <input v-model="query" aria-label="站内搜索" placeholder="搜索车型、改装方案、车友会、店家" />
+        <button type="submit" aria-label="搜索"><MagnifyingGlass :size="18" /></button>
+      </form>
 
       <nav class="tabs">
         <button v-for="(item, index) in navItems" :key="item" :class="{ active: activePage === index }" @click="switchPage(index)">
@@ -1485,7 +1586,7 @@ async function publishArticle() {
           <img :src="avatarSrc" alt="Tuner hub" />
           <strong>{{ displayUser.nickname || displayUser.username }}</strong>
           <span>@{{ displayUser.username }}</span>
-          <small>{{ displayUser.level_label || `TH ${displayUser.level || 1}` }}</small>
+          <small>{{ displayLevelNumber }}</small>
         </div>
         <div class="stats">
           <div><strong>{{ displayUser.followers_count }}</strong><span>粉丝</span></div>
@@ -1602,6 +1703,17 @@ async function publishArticle() {
         <template v-else-if="routeDetail">
           <section class="detail-page">
             <button class="back-link" @click="router.back()">返回上一页</button>
+            <article v-if="publicInfoPage" class="public-info-page">
+              <header>
+                <span>Tuner Hub</span>
+                <h1>{{ publicInfoPage.title }}</h1>
+                <p>{{ publicInfoPage.intro }}</p>
+              </header>
+              <section v-for="section in publicInfoPage.sections" :key="section[0]">
+                <h2>{{ section[0] }}</h2>
+                <p>{{ section[1] }}</p>
+              </section>
+            </article>
             <section v-if="route.path === '/garage'" class="data-panel">
               <div class="module-head"><h2>我的车库</h2><button @click="showGarageModal = true">添加车辆</button></div>
               <article v-for="vehicle in garageVehicles" :key="vehicle.id" class="topic-row">
@@ -1749,8 +1861,16 @@ async function publishArticle() {
             <article v-if="routeArticle && !isFunctionalListPage" class="article-detail">
               <header>
                 <div class="article-detail-labels">
-                  <span>{{ routeArticle.category }}文章</span>
-                  <b v-if="routeArticle.is_pinned" class="pin-badge">置顶</b>
+                  <div>
+                    <span>{{ routeArticle.category }}文章</span>
+                    <b v-if="routeArticle.is_pinned" class="pin-badge">置顶</b>
+                  </div>
+                  <div v-if="canManageCommunity()" class="article-admin-menu">
+                    <button class="icon-button" title="文章管理" aria-label="文章管理" @click="showArticleAdminActions = !showArticleAdminActions"><DotsThreeVertical :size="20" /></button>
+                    <div v-if="showArticleAdminActions">
+                      <button @click="deleteCommunityArticle(routeArticle)">删除文章</button>
+                    </div>
+                  </div>
                 </div>
                 <div class="article-author-line">
                   <img :src="routeArticle.author_avatar || defaultAvatar" :alt="routeArticle.author" />
@@ -1761,7 +1881,6 @@ async function publishArticle() {
                 </div>
                 <h1>{{ routeArticle.title }}</h1>
                 <p v-if="visibleArticleSummary" class="article-summary">{{ visibleArticleSummary }}</p>
-                <button v-if="canManageCommunity()" class="danger-button" @click="deleteCommunityArticle(routeArticle)">删除文章</button>
               </header>
               <figure v-if="routeArticle.has_cover && routeArticle.image" class="article-cover">
                 <img :src="routeArticle.image" :alt="routeArticle.title" />
@@ -1783,6 +1902,7 @@ async function publishArticle() {
               <div class="post-primary-actions">
                 <button :class="{ liked: routeArticle.is_liked }" @click="toggleArticleLike(routeArticle)"><Sparkle :weight="routeArticle.is_liked ? 'fill' : 'regular'" :size="18" />{{ routeArticle.likes || 0 }} 点赞</button>
                 <button :class="{ saved: routeArticle.is_saved }" @click="toggleArticleSave(routeArticle)"><BookmarkSimple :weight="routeArticle.is_saved ? 'fill' : 'regular'" :size="18" />{{ routeArticle.is_saved ? '已收藏' : '收藏' }}</button>
+                <button @click="openContentReport('article', routeArticle)"><Flag :size="18" />举报</button>
               </div>
               <form class="comment-form" @submit.prevent="submitArticleComment">
                 <textarea v-model="articleCommentBody" maxlength="1000" placeholder="说说这篇案例对你的帮助或疑问"></textarea>
@@ -1816,6 +1936,7 @@ async function publishArticle() {
               <div class="post-primary-actions">
                 <button :class="{ liked: routePost.is_liked }" @click="toggleLike(routePost)"><Sparkle :weight="routePost.is_liked ? 'fill' : 'regular'" :size="18" />{{ routePost.likes }} 点赞</button>
                 <button :class="{ saved: routePost.is_saved }" @click="toggleSave(routePost.id)"><BookmarkSimple :weight="routePost.is_saved ? 'fill' : 'regular'" :size="18" />{{ routePost.is_saved ? '已收藏' : '收藏' }}</button>
+                <button @click="openContentReport('post', routePost)"><Flag :size="18" />举报</button>
               </div>
               <form class="comment-form" @submit.prevent="submitComment">
                 <textarea v-model="commentBody" maxlength="1000" placeholder="写下真实的用车或改装交流内容"></textarea>
@@ -1853,8 +1974,8 @@ async function publishArticle() {
         </template>
 
         <template v-else-if="activePage === 0">
-          <section class="portal-hero">
-            <article v-if="articles[0]" class="portal-main-story" role="button" tabindex="0" @click="goTo(`/articles/${articles[0].id}`)">
+          <section class="portal-hero" :class="{ 'single-story': articles.length === 1, 'empty-story': !articles.length }">
+            <article v-if="articles[0]" class="portal-main-story" role="button" tabindex="0" @click="goTo(`/articles/${articles[0].id}`)" @keydown.enter.prevent="goTo(`/articles/${articles[0].id}`)" @keydown.space.prevent="goTo(`/articles/${articles[0].id}`)">
               <img :src="articles[0].image || assets.hero" :alt="articles[0].title" />
               <div>
                 <span>{{ articles[0].category }}</span>
@@ -1862,19 +1983,23 @@ async function publishArticle() {
                 <h1>{{ articles[0].title }}</h1>
               </div>
             </article>
-            <div class="portal-news-list">
+            <div v-if="articles.length > 1" class="portal-news-list">
               <button v-for="article in articles.slice(1, 5)" :key="article.id" @click="goTo(`/articles/${article.id}`)">
                 <span>{{ article.is_pinned ? '置顶 · ' : '' }}{{ article.category }}</span>
                 <strong>{{ article.title }}</strong>
                 <small>{{ article.author }} · {{ article.car || '综合' }}</small>
               </button>
-              <p v-if="!articles.length" class="empty-note">暂无文章，发布后会显示在这里。</p>
+            </div>
+            <div v-else-if="!articles.length" class="portal-empty-story">
+              <strong>分享第一篇真实车主文章</strong>
+              <p>记录选车、长期使用、维护和改装过程。</p>
+              <button @click="openArticleComposer()">发布文章</button>
             </div>
           </section>
 
           <section class="portal-tools">
             <button @click="goTo('/cars')"><Compass :size="20" />选车</button>
-            <button @click="goTo('/reviews')"><Gauge :size="20" />看评测</button>
+            <button @click="goTo('/reviews')"><Gauge :size="20" />看文章</button>
             <button @click="goTo('/community')"><ChatCircle :size="20" />车友圈</button>
             <button @click="goTo('/market')"><Wrench :size="20" />配件专区</button>
             <button @click="goTo('/rankings')"><Star :size="20" />排行榜</button>
@@ -1892,10 +2017,6 @@ async function publishArticle() {
               <button v-for="item in buyingGuides" :key="item.id" @click="goTo(`/guides/${item.id}`)">{{ item.title }}</button>
               <p v-if="!buyingGuides.length" class="empty-note">暂无导购内容。</p>
             </div>
-          </section>
-
-          <section class="channel-bar">
-            <button v-for="(item, index) in channelTabs" :key="item" :class="{ active: activeTab === index }" @click="activeTab = index; goTo(channelRoutes[index])">{{ item }}</button>
           </section>
 
           <section class="composer-bar">
@@ -1928,7 +2049,11 @@ async function publishArticle() {
                 </div>
               </div>
             </article>
-            <p v-if="!filteredPosts.length" class="empty-note">暂无社区内容，登录后可以发布第一条帖子。</p>
+            <div v-if="!filteredPosts.length" class="empty-state-block">
+              <strong>还没有车友动态</strong>
+              <p>从真实用车感受、维护记录或改装进度开始。</p>
+              <button @click="openComposer">发布第一条动态</button>
+            </div>
           </section>
         </template>
 
@@ -1950,7 +2075,7 @@ async function publishArticle() {
           </section>
 
           <section class="car-grid">
-            <article v-for="car in filteredCars" :key="car.name" class="car-card" role="button" tabindex="0" @click="goTo(carRoute(car))">
+            <article v-for="car in filteredCars" :key="car.name" class="car-card" role="button" tabindex="0" @click="goTo(carRoute(car))" @keydown.enter.prevent="goTo(carRoute(car))" @keydown.space.prevent="goTo(carRoute(car))">
                 <img :src="car.displayImg" :alt="car.name" @error="useFallbackImage" />
                 <div>
                   <span>{{ car.tag }}</span>
@@ -1966,14 +2091,17 @@ async function publishArticle() {
 
           <section class="two-column">
             <div class="data-panel">
-              <div class="module-head"><h2>改装热榜</h2><button @click="goTo('/rankings')">完整榜单</button></div>
-              <button v-for="row in rankings" :key="row[0]" class="rank-row" @click="goTo(pathFor('cars', row[1]))">
-                <b>{{ row[0] }}</b>
-                <strong>{{ row[1] }}</strong>
-                <span>{{ row[2] }}</span>
-                <i>{{ row[3] }}</i>
-              </button>
-              <p v-if="!rankings.length" class="empty-note">暂无榜单内容，用户发布后会自动生成。</p>
+              <div class="module-head"><h2>{{ hasRankingActivity ? '改装热榜' : '新收录车型' }}</h2><button @click="goTo('/rankings')">查看全部</button></div>
+              <template v-if="hasRankingActivity">
+                <button v-for="row in rankings" :key="row[0]" class="rank-row" @click="goTo(pathFor('cars', row[1]))">
+                  <b>{{ row[0] }}</b><strong>{{ row[1] }}</strong><span>{{ row[2] }}</span><i>{{ row[3] }}</i>
+                </button>
+              </template>
+              <template v-else>
+                <button v-for="car in enrichedCars.slice(0, 8)" :key="car.id" class="topic-row" @click="goTo(carRoute(car))">
+                  <strong>{{ car.name }}</strong><span>{{ car.tag }}</span>
+                </button>
+              </template>
             </div>
             <div class="data-panel">
               <div class="module-head"><h2>热门专题</h2><button @click="goTo('/topics')">更多专题</button></div>
@@ -2001,15 +2129,17 @@ async function publishArticle() {
 
         <template v-else-if="activePage === 2">
           <section class="page-head">
-            <h1>评测</h1>
-            <p>试驾、长测、赛道体验、空间油耗和改装项目复盘。</p>
+            <h1>文章</h1>
+            <p>真实车主故事、长期用车、试驾评测和改装案例。</p>
           </section>
           <section class="article-section">
-            <article v-for="article in reviewArticles" :key="article.id" class="article-row" @click="goTo(`/articles/${article.id}`)">
+            <article v-for="article in reviewArticles" :key="article.id" class="article-row" role="button" tabindex="0" @click="goTo(`/articles/${article.id}`)" @keydown.enter.prevent="goTo(`/articles/${article.id}`)" @keydown.space.prevent="goTo(`/articles/${article.id}`)">
               <img :src="article.image || assets.hero" :alt="article.title" />
               <div><span>{{ article.category }}</span><b v-if="article.is_pinned" class="pin-badge">置顶</b><h2>{{ article.title }}</h2><small>{{ article.author }} · {{ article.car || '综合' }}</small></div>
             </article>
-            <p v-if="!reviewArticles.length" class="empty-note">暂无评测文章。</p>
+            <div v-if="!reviewArticles.length" class="empty-state-block">
+              <strong>还没有车主文章</strong><p>长期用车、改装案例和真实体验都值得记录。</p><button @click="openArticleComposer()">发布文章</button>
+            </div>
           </section>
         </template>
 
@@ -2049,7 +2179,9 @@ async function publishArticle() {
                 <span>车主动态</span>
               </button>
             </article>
-            <p v-if="!filteredPosts.length" class="empty-note">暂无车友圈内容，登录后可以发布第一条动态。</p>
+            <div v-if="!filteredPosts.length" class="empty-state-block">
+              <strong>车友圈正在等待第一条动态</strong><p>可以分享用车问题、维护记录或改装进度。</p><button @click="openComposer">发布动态</button>
+            </div>
           </section>
         </template>
 
@@ -2068,7 +2200,9 @@ async function publishArticle() {
                 <small>进入详情查看配件动态</small>
               </div>
             </article>
-            <p v-if="!market.length" class="empty-note">暂无配件内容。</p>
+            <div v-if="!market.length" class="empty-state-block">
+              <strong>还没有配件内容</strong><p>发布配件安装案例、适配经验或真实二手件信息。</p><button @click="openPostComposerForType('二手市场')">发布配件内容</button>
+            </div>
           </section>
           <section class="two-column">
             <div class="data-panel">
@@ -2092,31 +2226,40 @@ async function publishArticle() {
 
         <template v-else>
           <section class="page-head">
-            <h1>排行榜</h1>
-            <p>热门车型、关注度、内容讨论量和近期趋势。</p>
+            <h1>{{ hasRankingActivity ? '排行榜' : '新收录车型' }}</h1>
+            <p>{{ hasRankingActivity ? '按照真实内容、点赞和讨论量生成。' : '当前互动数据不足，暂不生成热度排名。' }}</p>
           </section>
           <section class="data-panel">
-            <button v-for="row in rankings" :key="row[0]" class="rank-row" @click="goTo(pathFor('cars', row[1]))">
-              <b>{{ row[0] }}</b>
-              <strong>{{ row[1] }}</strong>
-              <span>{{ row[2] }}</span>
-              <i>{{ row[3] }}</i>
-            </button>
-            <p v-if="!rankings.length" class="empty-note">暂无榜单内容。</p>
+            <template v-if="hasRankingActivity">
+              <button v-for="row in rankings" :key="row[0]" class="rank-row" @click="goTo(pathFor('cars', row[1]))">
+                <b>{{ row[0] }}</b><strong>{{ row[1] }}</strong><span>{{ row[2] }}</span><i>{{ row[3] }}</i>
+              </button>
+            </template>
+            <template v-else>
+              <button v-for="car in enrichedCars" :key="car.id" class="topic-row" @click="goTo(carRoute(car))">
+                <strong>{{ car.name }}</strong><span>{{ car.tag }} · {{ car.trims.length }} 个车款</span>
+              </button>
+            </template>
           </section>
         </template>
       </section>
 
       <aside class="right-rail">
         <section class="panel">
-          <div class="panel-head"><h2>热榜</h2><button @click="goTo('/rankings')">更多</button></div>
-          <button v-for="row in rankings.slice(0, 4)" :key="row[0]" class="rank-row compact" @click="goTo(pathFor('cars', row[1]))">
-            <b>{{ row[0] }}</b><strong>{{ row[1] }}</strong><span>{{ row[3] }}</span>
-          </button>
-          <p v-if="!rankings.length" class="empty-note">暂无榜单。</p>
+          <div class="panel-head"><h2>{{ hasRankingActivity ? '热榜' : '新收录车型' }}</h2><button @click="goTo('/rankings')">更多</button></div>
+          <template v-if="hasRankingActivity">
+            <button v-for="row in rankings.slice(0, 4)" :key="row[0]" class="rank-row compact" @click="goTo(pathFor('cars', row[1]))">
+              <b>{{ row[0] }}</b><strong>{{ row[1] }}</strong><span>{{ row[3] }}</span>
+            </button>
+          </template>
+          <template v-else>
+            <button v-for="car in enrichedCars.slice(0, 4)" :key="car.id" class="topic-row compact-topic" @click="goTo(carRoute(car))">
+              <strong>{{ car.name }}</strong><span>{{ car.tag }}</span>
+            </button>
+          </template>
         </section>
 
-        <section class="panel">
+        <section v-if="clubs.length" class="panel">
           <div class="panel-head"><h2>推荐车友</h2><button @click="goTo('/profile')">我的</button></div>
           <article v-for="user in userCards.filter((item) => item.id !== currentUser?.id).slice(0, 5)" :key="user.id" class="user-row">
             <img :src="user.avatar || defaultAvatar" :alt="user.nickname || user.username" />
@@ -2148,33 +2291,40 @@ async function publishArticle() {
           <button v-for="club in clubs" :key="club[0]" class="club-row" @click="goTo(pathFor('clubs', club[1]))">
             <span>{{ club[0] }}</span><div><strong>{{ club[1] }}</strong><small>{{ club[2] }}</small></div><i>热</i>
           </button>
-          <p v-if="!clubs.length" class="empty-note">暂无车友会。</p>
         </section>
 
-        <section class="panel">
+        <section v-if="events.length" class="panel">
           <div class="panel-head"><h2>附近聚会</h2><button @click="goTo('/events')">全部</button></div>
           <button v-for="event in events" :key="event.name" class="event-row" @click="goTo(pathFor('events', event.name))">
             <img :src="event.img" alt="" @error="useFallbackImage" /><div><strong>{{ event.name }}</strong><small><CalendarBlank :size="13" /> {{ event.meta }}</small><span>{{ event.count }}</span></div>
           </button>
-          <p v-if="!events.length" class="empty-note">暂无聚会活动。</p>
         </section>
 
-        <section class="panel">
+        <section v-if="market.length" class="panel">
           <div class="panel-head"><h2>车友热议配件</h2><button @click="goTo('/market')">全部</button></div>
           <button v-for="item in market" :key="item.name" class="product-row" @click="goTo(pathFor('market', item.name))">
             <img :src="item.img" alt="" @error="useFallbackImage" /><div><strong>{{ item.name }}</strong><span>{{ item.status || '配件动态' }}</span></div>
           </button>
-          <p v-if="!market.length" class="empty-note">暂无配件内容。</p>
         </section>
       </aside>
     </main>
 
+    <footer class="site-footer">
+      <span>© 2026 Tuner Hub</span>
+      <nav aria-label="站点信息">
+        <button @click="goTo('/terms')">用户协议</button>
+        <button @click="goTo('/privacy')">隐私政策</button>
+        <button @click="goTo('/community-rules')">社区规范</button>
+        <button @click="goTo('/contact')">联系平台</button>
+      </nav>
+    </footer>
+
     <div v-if="showComposer" class="modal-wrap">
       <button class="scrim" @click="showComposer = false"></button>
-      <section class="composer-modal" :class="{ 'article-composer-modal': composerMode === 'article' }">
+      <section class="composer-modal" :class="{ 'article-composer-modal': composerMode === 'article' }" role="dialog" aria-modal="true" aria-labelledby="composer-title">
         <div class="modal-head">
-          <h2>发布内容</h2>
-          <button class="icon-button" @click="showComposer = false"><X :size="20" /></button>
+          <h2 id="composer-title">发布内容</h2>
+          <button class="icon-button" aria-label="关闭发布窗口" @click="showComposer = false"><X :size="20" /></button>
         </div>
         <div class="composer-mode-tabs">
           <button :class="{ active: composerMode === 'post' }" @click="composerMode = 'post'">发布动态</button>
@@ -2283,10 +2433,10 @@ async function publishArticle() {
 
     <div v-if="showAuthModal" class="modal-wrap">
       <button class="scrim" @click="showAuthModal = false"></button>
-      <section class="auth-modal">
+      <section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
         <div class="modal-head">
-          <h2>{{ authTitle }}</h2>
-          <button class="icon-button" @click="showAuthModal = false"><X :size="20" /></button>
+          <h2 id="auth-title">{{ authTitle }}</h2>
+          <button class="icon-button" aria-label="关闭账号窗口" @click="showAuthModal = false"><X :size="20" /></button>
         </div>
         <div v-if="authMode === 'login' || authMode === 'register'" class="auth-tabs">
           <button :class="{ active: authMode === 'login' }" @click="authMode = 'login'; authMessage = ''">登录</button>
@@ -2299,6 +2449,10 @@ async function publishArticle() {
         <input v-if="authMode === 'forgot'" v-model="resetForm.email" placeholder="注册邮箱" type="email" autocomplete="email" />
         <input v-if="authMode === 'reset'" v-model="resetForm.new_password" placeholder="新密码" type="password" autocomplete="new-password" />
         <input v-if="authMode === 'reset'" v-model="resetForm.confirm_password" placeholder="确认新密码" type="password" autocomplete="new-password" />
+        <div v-if="authMode === 'register'" class="terms-consent">
+          <input id="accept-terms" v-model="authForm.accepted_terms" type="checkbox" aria-label="同意用户协议和隐私政策" />
+          <span>我已阅读并同意 <button type="button" @click="showAuthModal = false; goTo('/terms')">用户协议</button> 和 <button type="button" @click="showAuthModal = false; goTo('/privacy')">隐私政策</button></span>
+        </div>
         <button v-if="authMode === 'login'" class="forgot-password-button" @click="authMode = 'forgot'; authMessage = ''">忘记密码？</button>
         <p v-if="authMessage" class="form-message">{{ authMessage }}</p>
         <button class="post-button" @click="submitAuth">
@@ -2308,12 +2462,33 @@ async function publishArticle() {
       </section>
     </div>
 
+    <div v-if="showReportModal" class="modal-wrap">
+      <button class="scrim" @click="showReportModal = false"></button>
+      <section class="auth-modal report-modal" role="dialog" aria-modal="true" aria-labelledby="report-title">
+        <div class="modal-head">
+          <h2 id="report-title">举报内容</h2>
+          <button class="icon-button" aria-label="关闭举报窗口" @click="showReportModal = false"><X :size="20" /></button>
+        </div>
+        <p class="form-message">{{ reportTarget?.title }}</p>
+        <select v-model="reportForm.reason" class="composer-title">
+          <option>不实或误导</option>
+          <option>广告或诈骗</option>
+          <option>侵权或盗用</option>
+          <option>辱骂或骚扰</option>
+          <option>危险或违法内容</option>
+          <option>其他</option>
+        </select>
+        <textarea v-model="reportForm.detail" class="message-textarea" maxlength="1000" placeholder="补充说明（可选）"></textarea>
+        <button class="post-button" :disabled="reportSubmitting" @click="submitContentReport">{{ reportSubmitting ? '提交中' : '提交举报' }}</button>
+      </section>
+    </div>
+
     <div v-if="showMessageModal" class="modal-wrap">
       <button class="scrim" @click="showMessageModal = false"></button>
-      <section class="auth-modal">
+      <section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="message-title">
         <div class="modal-head">
-          <h2>发送私信</h2>
-          <button class="icon-button" @click="showMessageModal = false"><X :size="20" /></button>
+          <h2 id="message-title">发送私信</h2>
+          <button class="icon-button" aria-label="关闭私信窗口" @click="showMessageModal = false"><X :size="20" /></button>
         </div>
         <p class="form-message">发送给 {{ messageTarget?.nickname || messageTarget?.username }}</p>
         <textarea v-model="messageBody" class="message-textarea" maxlength="2000" placeholder="输入私信内容"></textarea>
@@ -2323,10 +2498,10 @@ async function publishArticle() {
 
     <div v-if="showGarageModal" class="modal-wrap">
       <button class="scrim" @click="showGarageModal = false"></button>
-      <section class="auth-modal">
+      <section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="garage-title">
         <div class="modal-head">
-          <h2>添加车辆</h2>
-          <button class="icon-button" @click="showGarageModal = false"><X :size="20" /></button>
+          <h2 id="garage-title">添加车辆</h2>
+          <button class="icon-button" aria-label="关闭添加车辆窗口" @click="showGarageModal = false"><X :size="20" /></button>
         </div>
         <select v-model="garageForm.car_id" class="composer-title">
           <option value="">选择车型（可选）</option>
@@ -2342,10 +2517,10 @@ async function publishArticle() {
 
     <div v-if="showProjectModal" class="modal-wrap">
       <button class="scrim" @click="showProjectModal = false"></button>
-      <section class="auth-modal">
+      <section class="auth-modal" role="dialog" aria-modal="true" aria-labelledby="project-title">
         <div class="modal-head">
-          <h2>添加项目记录</h2>
-          <button class="icon-button" @click="showProjectModal = false"><X :size="20" /></button>
+          <h2 id="project-title">添加项目记录</h2>
+          <button class="icon-button" aria-label="关闭项目记录窗口" @click="showProjectModal = false"><X :size="20" /></button>
         </div>
         <select v-model="projectForm.vehicle_id" class="composer-title">
           <option value="">关联车辆（可选）</option>

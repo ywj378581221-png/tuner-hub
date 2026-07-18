@@ -88,11 +88,29 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
+  padding: 0 5px 0 12px;
   color: #8a9099;
   background: #f2f3f5;
   border: 1px solid #e2e4e8;
   border-radius: 5px;
+}
+
+.search button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #676e78;
+}
+
+.search button:hover,
+.search button:focus-visible {
+  background: #e3e5e9;
+  color: #111;
 }
 
 .search input {
@@ -644,6 +662,11 @@ button {
   gap: 12px;
 }
 
+.portal-hero.single-story,
+.portal-hero.empty-story {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .portal-main-story,
 .portal-news-list,
 .portal-tools,
@@ -693,6 +716,39 @@ button {
   display: grid;
   align-content: start;
   padding: 8px 12px;
+}
+
+.portal-empty-story {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  min-height: 180px;
+  align-content: center;
+  padding: 28px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.portal-empty-story strong {
+  font-size: 22px;
+}
+
+.portal-empty-story p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.portal-empty-story button,
+.empty-state-block button {
+  height: 38px;
+  margin-top: 4px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 5px;
+  background: #111;
+  color: white;
+  font-weight: 800;
 }
 
 .portal-news-list button {
@@ -1324,6 +1380,22 @@ button {
   font-size: 13px;
 }
 
+.empty-state-block {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+  padding: 24px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.empty-state-block p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .detail-hero-card {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
@@ -1361,6 +1433,16 @@ button {
   gap: 8px;
 }
 
+.article-detail-labels {
+  justify-content: space-between;
+}
+
+.article-detail-labels > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .article-detail {
   padding: 24px clamp(20px, 5vw, 64px) 34px;
   background: white;
@@ -1373,7 +1455,7 @@ button {
   margin: 0 auto 22px;
 }
 
-.article-detail-labels > span {
+.article-detail-labels > div:first-child > span {
   color: #9a7200;
   font-size: 13px;
   font-weight: 900;
@@ -1450,8 +1532,41 @@ button {
   line-height: 1.3;
 }
 
-.article-detail header .danger-button {
-  margin-top: 14px;
+.article-admin-menu {
+  position: relative;
+}
+
+.article-admin-menu .icon-button {
+  color: #555b65;
+  border-color: var(--line);
+}
+
+.article-admin-menu > div {
+  position: absolute;
+  z-index: 5;
+  top: 38px;
+  right: 0;
+  min-width: 120px;
+  padding: 5px;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.article-admin-menu > div button {
+  width: 100%;
+  height: 34px;
+  border: 0;
+  border-radius: 4px;
+  background: white;
+  color: #c52323;
+  font-weight: 800;
+  text-align: left;
+}
+
+.article-admin-menu > div button:hover {
+  background: #fff1f1;
 }
 
 .article-blocks {
@@ -1490,7 +1605,7 @@ button {
 }
 
 .article-interaction-panel {
-  width: min(100%, 820px);
+  width: min(820px, calc(100% - clamp(40px, 10vw, 128px)));
   max-width: none;
   box-sizing: border-box;
   gap: 20px;
@@ -1991,6 +2106,79 @@ button {
   align-content: start;
 }
 
+.compact-topic {
+  padding: 9px 0;
+}
+
+.public-info-page {
+  max-width: 860px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 32px clamp(20px, 5vw, 56px);
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.public-info-page header {
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.public-info-page header span {
+  color: #9a7200;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.public-info-page h1 {
+  margin: 8px 0 10px;
+  font-size: 32px;
+}
+
+.public-info-page h2 {
+  margin: 24px 0 8px;
+  font-size: 19px;
+}
+
+.public-info-page p {
+  margin: 0;
+  color: #4f5660;
+  line-height: 1.8;
+}
+
+.site-footer {
+  max-width: 1440px;
+  margin: 8px auto 0;
+  padding: 20px 16px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  color: #737a84;
+  font-size: 13px;
+}
+
+.site-footer nav {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 16px;
+}
+
+.site-footer button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #555d68;
+}
+
+.site-footer button:hover,
+.site-footer button:focus-visible {
+  color: #111;
+  text-decoration: underline;
+}
+
 .panel {
   padding: 13px;
 }
@@ -2448,6 +2636,37 @@ button {
 
 .auth-modal {
   width: min(420px, calc(100vw - 28px));
+}
+
+.terms-consent {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  margin: 2px 0 12px;
+  color: #555d68;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.auth-modal .terms-consent input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+}
+
+.terms-consent button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #815f00;
+  font: inherit;
+  font-weight: 800;
+}
+
+.report-modal .message-textarea {
+  min-height: 120px;
+  margin-bottom: 12px;
 }
 
 .lead-modal {
@@ -2922,6 +3141,7 @@ button {
   }
 
   .article-interaction-panel {
+    width: 100%;
     gap: 16px;
     margin-top: 12px;
     padding: 16px 14px;
@@ -2929,7 +3149,7 @@ button {
 
   .article-interaction-panel .post-primary-actions {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .article-interaction-panel .post-primary-actions button {
@@ -2947,6 +3167,23 @@ button {
 
   .article-detail h1 {
     font-size: 26px;
+  }
+
+  .public-info-page {
+    padding: 24px 18px;
+  }
+
+  .public-info-page h1 {
+    font-size: 27px;
+  }
+
+  .site-footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .site-footer nav {
+    justify-content: flex-start;
   }
 
   .article-body {

@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils import timezone
 from django.utils.html import format_html
-from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, Car, CarTrim, Club, Event, Guide, MarketItem, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
+from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, Car, CarTrim, Club, ContentReport, Event, Guide, MarketItem, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
 from .views import user_level_points
 
 
@@ -257,3 +257,21 @@ class ArticleCommentAdmin(admin.ModelAdmin):
     list_display = ("user", "article", "created_at")
     search_fields = ("user__username", "article__title", "body")
     autocomplete_fields = ("user", "article")
+
+
+@admin.register(ContentReport)
+class ContentReportAdmin(admin.ModelAdmin):
+    list_display = ("target_title", "target_type", "reason", "reporter", "status", "reviewed_by", "created_at")
+    list_filter = ("status", "target_type", "reason", "created_at")
+    search_fields = ("target_title", "detail", "reporter__username")
+    readonly_fields = ("reporter", "target_type", "target_id", "target_title", "reason", "detail", "created_at", "updated_at")
+    fields = ("reporter", "target_type", "target_id", "target_title", "reason", "detail", "status", "reviewed_by", "reviewed_at", "created_at", "updated_at")
+
+    def save_model(self, request, obj, form, change):
+        if obj.status != "pending":
+            obj.reviewed_by = request.user
+            obj.reviewed_at = timezone.now()
+        else:
+            obj.reviewed_by = None
+            obj.reviewed_at = None
+        super().save_model(request, obj, form, change)

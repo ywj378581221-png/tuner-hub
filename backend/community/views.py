@@ -25,7 +25,7 @@ from django.utils.cache import patch_vary_headers
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
-from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, Car, CarTrim, Club, Event, Guide, MarketItem, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, PublishState, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
+from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, Car, CarTrim, Club, ContentReport, Event, Guide, MarketItem, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, PublishState, Shop, Topic, UserDailyActivity, UserFollow, UserGarageVehicle, UserProfile
 
 
 def with_cors(response, request=None):
@@ -627,6 +627,8 @@ def register_user(request):
         validate_email(email)
     except ValidationError:
         return with_cors(JsonResponse({"error": "请输入有效的邮箱地址"}, status=400), request)
+    if data.get("accepted_terms") is not True:
+        return with_cors(JsonResponse({"error": "请先同意用户协议和隐私政策"}, status=400), request)
 
     User = get_user_model()
     if User.objects.filter(username=username).exists():
@@ -1307,6 +1309,53 @@ def delete_article(request, article_id):
         return with_cors(JsonResponse({"error": "文章不存在"}, status=404), request)
     article.delete()
     return with_cors(JsonResponse({"ok": True, "id": article_id}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def create_content_report(request):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再提交举报"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    try:
+        data = read_json(request)
+    except json.JSONDecodeError:
+        return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+
+    target_type = (data.get("target_type") or "").strip()
+    try:
+        target_id = int(data.get("target_id"))
+    except (TypeError, ValueError):
+        return with_cors(JsonResponse({"error": "举报内容不存在"}, status=400), request)
+    target_models = {"article": Article, "post": Post}
+    target_model = target_models.get(target_type)
+    if not target_model:
+        return with_cors(JsonResponse({"error": "不支持的举报内容类型"}, status=400), request)
+    target = public_queryset(target_model).filter(id=target_id).first()
+    if not target:
+        return with_cors(JsonResponse({"error": "举报内容不存在"}, status=404), request)
+
+    reason = (data.get("reason") or "").strip()
+    allowed_reasons = {value for value, _label in ContentReport.REASON_CHOICES}
+    if reason not in allowed_reasons:
+        return with_cors(JsonResponse({"error": "请选择有效的举报原因"}, status=400), request)
+    detail = (data.get("detail") or "").strip()
+    if len(detail) > 1000:
+        return with_cors(JsonResponse({"error": "补充说明不能超过 1000 个字符"}, status=400), request)
+
+    report, created = ContentReport.objects.get_or_create(
+        reporter=request.user,
+        target_type=target_type,
+        target_id=target_id,
+        defaults={"target_title": target.title, "reason": reason, "detail": detail},
+    )
+    if not created:
+        return with_cors(JsonResponse({"error": "你已经举报过这条内容"}, status=409), request)
+    return with_cors(JsonResponse({"report": {"id": report.id, "status": report.status}}, json_dumps_params={"ensure_ascii": False}), request)
 
 
 @csrf_exempt
