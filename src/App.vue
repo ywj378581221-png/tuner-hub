@@ -18,12 +18,12 @@ import {
   PhList as List,
   PhMagnifyingGlass as MagnifyingGlass,
   PhMapPin as MapPin,
-  PhDotsThreeVertical as DotsThreeVertical,
   PhPaperPlaneTilt as PaperPlaneTilt,
   PhPlus as Plus,
   PhSlidersHorizontal as SlidersHorizontal,
   PhSparkle as Sparkle,
   PhStar as Star,
+  PhTrash as Trash,
   PhUsersThree as UsersThree,
   PhWrench as Wrench,
   PhX as X,
@@ -153,7 +153,6 @@ const showMessageModal = ref(false);
 const showGarageModal = ref(false);
 const showProjectModal = ref(false);
 const showReportModal = ref(false);
-const showArticleAdminActions = ref(false);
 const authMode = ref("login");
 const authMessage = ref("");
 const authForm = ref({ username: "", password: "", email: "", nickname: "", accepted_terms: false });
@@ -1365,7 +1364,6 @@ async function deleteCommunityPost(post) {
 
 async function deleteCommunityArticle(article) {
   if (!article || !canManageCommunity()) return;
-  showArticleAdminActions.value = false;
   if (!window.confirm(`确定删除文章“${article.title}”吗？此操作无法撤销。`)) return;
   try {
     await apiFetch(`/api/articles/${article.id}/delete/`, { method: "POST", body: "{}" });
@@ -1865,12 +1863,7 @@ async function publishArticle() {
                     <span>{{ routeArticle.category }}文章</span>
                     <b v-if="routeArticle.is_pinned" class="pin-badge">置顶</b>
                   </div>
-                  <div v-if="canManageCommunity()" class="article-admin-menu">
-                    <button class="icon-button" title="文章管理" aria-label="文章管理" @click="showArticleAdminActions = !showArticleAdminActions"><DotsThreeVertical :size="20" /></button>
-                    <div v-if="showArticleAdminActions">
-                      <button @click="deleteCommunityArticle(routeArticle)">删除文章</button>
-                    </div>
-                  </div>
+                  <button v-if="canManageCommunity()" class="danger-button article-delete-button" @click="deleteCommunityArticle(routeArticle)"><Trash :size="16" />删除文章</button>
                 </div>
                 <div class="article-author-line">
                   <img :src="routeArticle.author_avatar || defaultAvatar" :alt="routeArticle.author" />
