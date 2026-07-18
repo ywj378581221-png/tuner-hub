@@ -286,6 +286,20 @@ const routeArticle = computed(() => articles.value.find((article) => (
   || route.path === pathFor("articles", article.slug || article.title)
 )) || null);
 
+function normalizeArticleText(value) {
+  return String(value || "").replace(/\s+/g, "").trim();
+}
+
+const visibleArticleSummary = computed(() => {
+  const article = routeArticle.value;
+  const summary = String(article?.summary || "").trim();
+  if (!summary) return "";
+
+  const firstParagraph = article.blocks?.find((block) => block.type === "paragraph" && block.text?.trim())?.text
+    || String(article.body || "").split(/\n\s*\n/)[0];
+  return normalizeArticleText(summary) === normalizeArticleText(firstParagraph) ? "" : summary;
+});
+
 const routeCar = computed(() => {
   if (!route.path.startsWith("/cars/")) return null;
   const currentPath = route.path.replace(/\/community\/?$/, "");
@@ -1738,12 +1752,15 @@ async function publishArticle() {
                   <span>{{ routeArticle.category }}文章</span>
                   <b v-if="routeArticle.is_pinned" class="pin-badge">置顶</b>
                 </div>
-                <h1>{{ routeArticle.title }}</h1>
-                <p v-if="routeArticle.summary" class="article-summary">{{ routeArticle.summary }}</p>
                 <div class="article-author-line">
                   <img :src="routeArticle.author_avatar || defaultAvatar" :alt="routeArticle.author" />
-                  <small>{{ routeArticle.author || '用户投稿' }} · {{ routeArticle.time }} · {{ routeArticle.car || '综合内容' }} · {{ routeArticle.views || 0 }} 阅读</small>
+                  <div>
+                    <strong>{{ routeArticle.author || '用户投稿' }}</strong>
+                    <small>{{ routeArticle.time }} · {{ routeArticle.car || '综合内容' }} · {{ routeArticle.views || 0 }} 阅读</small>
+                  </div>
                 </div>
+                <h1>{{ routeArticle.title }}</h1>
+                <p v-if="visibleArticleSummary" class="article-summary">{{ visibleArticleSummary }}</p>
                 <button v-if="canManageCommunity()" class="danger-button" @click="deleteCommunityArticle(routeArticle)">删除文章</button>
               </header>
               <figure v-if="routeArticle.has_cover && routeArticle.image" class="article-cover">
@@ -2215,7 +2232,7 @@ async function publishArticle() {
             <button v-for="label in ['车主故事', '长期用车', '改装案例', '评测']" :key="label" :class="{ active: articleDraft.category === label }" @click="articleDraft.category = label">{{ label }}</button>
           </div>
           <input v-model="articleDraft.title" class="composer-title" maxlength="180" placeholder="文章标题，例如：21万公里的宝马 M2C" />
-          <textarea v-model="articleDraft.summary" class="article-summary-input" maxlength="500" placeholder="用两三句话说明这篇文章能给车友什么参考（可选）"></textarea>
+          <textarea v-model="articleDraft.summary" class="article-summary-input" maxlength="500" placeholder="用两三句话说明文章价值，不要重复正文第一段（可选）"></textarea>
           <select v-model="articleDraft.car" class="composer-title">
             <option value="">选择关联车型（可选）</option>
             <option v-for="car in enrichedCars" :key="car.name" :value="car.name">{{ car.name }}</option>
