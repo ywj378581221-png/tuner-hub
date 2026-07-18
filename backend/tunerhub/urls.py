@@ -18,7 +18,7 @@ from django.contrib import admin
 from django.conf import settings
 from django.conf.urls.static import static
 from django.urls import path, re_path
-from community.views import article_comments, article_detail, change_password, confirm_password_reset, create_article, create_content_report, create_garage_vehicle, create_post, create_project_record, current_user, delete_article, delete_post, login_user, logout_user, mark_private_message_read, post_comments, private_messages, register_user, request_password_reset, send_private_message, site_data, toggle_article_like, toggle_article_save, toggle_follow_user, toggle_post_like, toggle_post_save, update_email, update_profile, upload_avatar
+from community.views import article_comments, article_detail, change_password, confirm_password_reset, create_article, create_content_report, create_garage_vehicle, create_post, create_project_record, current_user, delete_article, delete_post, login_user, logout_user, mark_private_message_read, post_comments, private_messages, register_user, request_password_reset, send_private_message, site_data, toggle_article_like, toggle_article_save, toggle_follow_user, toggle_post_like, toggle_post_save, update_email, update_profile, upload_avatar, user_connections
 from tunerhub.views import frontend_app
 
 urlpatterns = [
@@ -33,6 +33,7 @@ urlpatterns = [
     path('api/auth/password-reset/request/', request_password_reset, name='request-password-reset'),
     path('api/auth/password-reset/confirm/', confirm_password_reset, name='confirm-password-reset'),
     path('api/auth/avatar/', upload_avatar, name='upload-avatar'),
+    path('api/auth/connections/', user_connections, name='user-connections'),
     path('api/users/<int:user_id>/follow/', toggle_follow_user, name='toggle-follow-user'),
     path('api/users/<int:user_id>/message/', send_private_message, name='send-private-message'),
     path('api/messages/', private_messages, name='private-messages'),

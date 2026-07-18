@@ -168,6 +168,8 @@ const emailSaving = ref(false);
 const passwordForm = ref({ current_password: "", new_password: "", confirm_password: "" });
 const passwordSaving = ref(false);
 const userCards = ref([]);
+const connectionUsers = ref([]);
+const connectionsLoading = ref(false);
 const inboxMessages = ref([]);
 const unreadMessageCount = ref(0);
 const postComments = ref([]);
@@ -226,7 +228,13 @@ const unreadMessages = computed(() => inboxMessages.value.filter((message) => me
 const isFunctionalListPage = computed(() => [
   "/garage", "/projects", "/profile", "/saved", "/notifications", "/search", "/topics", "/events", "/clubs", "/shops",
   "/terms", "/privacy", "/community-rules", "/contact",
-].includes(route.path) || route.path.startsWith("/messages"));
+].includes(route.path) || route.path.startsWith("/messages") || route.path.startsWith("/profile/"));
+
+const connectionType = computed(() => {
+  if (route.path === "/profile/followers") return "followers";
+  if (route.path === "/profile/following") return "following";
+  return "";
+});
 
 const routeMessage = computed(() => {
   if (!route.path.startsWith("/messages/") || !route.params.id) return null;
@@ -504,6 +512,8 @@ const routeDetail = computed(() => {
     "/events": ["活动中心", "聚合车友会聚会、店家开放日、赛道日和报名信息。"],
     "/clubs": ["车友会广场", "浏览活跃车友会、成员项目车、活动和热门帖子。"],
     "/profile": ["个人中心", "管理账号资料、头像、车库、收藏和发布内容。"],
+    "/profile/followers": ["我的粉丝", "查看当前账号真实的粉丝列表。"],
+    "/profile/following": ["我的关注", "查看当前账号正在关注的车友。"],
     "/admin-guide": ["内容管理说明", "管理员可以维护社区内容，普通用户看到的都是已发布内容。"],
     "/terms": ["用户协议", "使用 Tuner Hub 前请了解账号、内容和社区管理规则。"],
     "/privacy": ["隐私政策", "了解账号信息、用户内容和安全记录的使用方式。"],
@@ -703,6 +713,23 @@ async function loadMessages() {
   }
 }
 
+async function loadConnections(type = connectionType.value) {
+  if (!currentUser.value || !type) {
+    connectionUsers.value = [];
+    return;
+  }
+  connectionsLoading.value = true;
+  try {
+    const data = await apiFetch(`/api/auth/connections/?type=${type}`);
+    connectionUsers.value = normalizeImages(data.users || [], ["avatar"]);
+  } catch (error) {
+    connectionUsers.value = [];
+    showToast(error.message);
+  } finally {
+    connectionsLoading.value = false;
+  }
+}
+
 onMounted(async () => {
   if (route.path.startsWith("/reset-password/")) {
     resetForm.value.uid = String(route.params.uid || "");
@@ -712,6 +739,7 @@ onMounted(async () => {
   await checkCurrentUser();
   await loadSiteData();
   await loadMessages();
+  await loadConnections();
   if (route.path === "/create" || route.path.startsWith("/create/")) {
     composerMode.value = route.path === "/create/article" ? "article" : "post";
     showComposer.value = true;
@@ -733,6 +761,10 @@ watch(() => routeArticle.value?.id, (articleId) => {
   else articleComments.value = [];
 });
 
+watch(() => route.path, () => {
+  if (connectionType.value) loadConnections();
+});
+
 function switchPage(index) {
   router.push(routePaths[index]);
   menuOpen.value = false;
@@ -749,6 +781,15 @@ function carRoute(car) {
 function goTo(path) {
   router.push(path);
   menuOpen.value = false;
+}
+
+function openConnections(type) {
+  if (!currentUser.value) {
+    openAuth("login");
+    authMessage.value = "请先登录再查看关注关系";
+    return;
+  }
+  goTo(`/profile/${type}`);
 }
 
 function submitSearch() {
@@ -1289,6 +1330,9 @@ async function toggleFollow(user) {
       if (item.id === data.current_user.id) return { ...item, ...data.current_user };
       return item;
     });
+    connectionUsers.value = connectionUsers.value
+      .map((item) => item.id === data.target_user.id ? { ...item, ...data.target_user, is_following: data.following } : item)
+      .filter((item) => !(route.path === "/profile/following" && item.id === data.target_user.id && !data.following));
     if (currentUser.value?.id === data.current_user.id) applyCurrentUser(data.current_user);
     showToast(data.following ? "已关注" : "已取消关注");
     await loadSiteData();
@@ -1587,8 +1631,8 @@ async function publishArticle() {
           <small>{{ displayLevelNumber }}</small>
         </div>
         <div class="stats">
-          <div><strong>{{ displayUser.followers_count }}</strong><span>粉丝</span></div>
-          <div><strong>{{ displayUser.following_count }}</strong><span>关注</span></div>
+          <button @click="openConnections('followers')"><strong>{{ displayUser.followers_count }}</strong><span>粉丝</span></button>
+          <button @click="openConnections('following')"><strong>{{ displayUser.following_count }}</strong><span>关注</span></button>
         </div>
         <nav class="side-nav">
           <button v-for="(item, index) in navItems" :key="item" :class="{ selected: activePage === index }" @click="switchPage(index)">
@@ -1791,6 +1835,27 @@ async function publishArticle() {
                   <span><b>等级上限</b>Lv.30</span>
                 </div>
               </div>
+            </section>
+            <section v-if="connectionType" class="data-panel connection-list">
+              <div class="module-head">
+                <h2>{{ connectionType === 'followers' ? '我的粉丝' : '我的关注' }}</h2>
+                <span>{{ connectionUsers.length }} 人</span>
+              </div>
+              <article v-for="user in connectionUsers" :key="user.id" class="user-row connection-row">
+                <img :src="user.avatar || defaultAvatar" :alt="user.nickname || user.username" />
+                <div>
+                  <strong>{{ user.nickname || user.username }}</strong>
+                  <small>{{ user.level_label }} · {{ user.followers_count }} 粉丝 · {{ user.following_count }} 关注</small>
+                  <span>{{ user.signature || '暂无个人签名' }}</span>
+                </div>
+                <div class="user-actions">
+                  <button @click="toggleFollow(user)">{{ user.is_following ? '已关注' : '关注' }}</button>
+                  <button @click="openMessage(user)">私信</button>
+                </div>
+              </article>
+              <p v-if="connectionsLoading" class="empty-note">正在加载...</p>
+              <p v-else-if="!currentUser" class="empty-note">登录后查看关注关系。</p>
+              <p v-else-if="!connectionUsers.length" class="empty-note">{{ connectionType === 'followers' ? '暂时还没有粉丝。' : '暂时还没有关注其他车友。' }}</p>
             </section>
             <section v-if="route.path === '/saved'" class="data-panel">
               <div class="module-head"><h2>收藏内容</h2><span>{{ savedPosts.length + savedArticles.length }} 条</span></div>

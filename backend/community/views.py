@@ -959,6 +959,40 @@ def toggle_follow_user(request, user_id):
 
 @csrf_exempt
 @require_http_methods(["GET", "OPTIONS"])
+def user_connections(request):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再查看关注关系"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+
+    connection_type = request.GET.get("type", "followers")
+    if connection_type == "followers":
+        relations = UserFollow.objects.filter(
+            following=request.user,
+            follower__is_active=True,
+        ).select_related("follower", "follower__profile")[:200]
+        users = [relation.follower for relation in relations]
+    elif connection_type == "following":
+        relations = UserFollow.objects.filter(
+            follower=request.user,
+            following__is_active=True,
+        ).select_related("following", "following__profile")[:200]
+        users = [relation.following for relation in relations]
+    else:
+        return with_cors(JsonResponse({"error": "关注关系类型无效"}, status=400), request)
+
+    return with_cors(JsonResponse({
+        "type": connection_type,
+        "count": len(users),
+        "users": [public_user_payload(user, request.user) for user in users],
+    }, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "OPTIONS"])
 def private_messages(request):
     if request.method == "OPTIONS":
         return options_response(request)

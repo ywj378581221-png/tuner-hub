@@ -16,7 +16,7 @@ from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
-from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, ContentReport, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, UserGarageVehicle, UserProfile
+from .models import Article, ArticleBlock, ArticleComment, ArticleLike, ArticleSave, ContentReport, Post, PostComment, PostLike, PostSave, PrivateMessage, ProjectCarRecord, UserFollow, UserGarageVehicle, UserProfile
 
 
 class UpdateProfileTests(TestCase):
@@ -1049,6 +1049,29 @@ class FollowAndModerationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["current_user"]["following_count"], 1)
         self.assertEqual(response.json()["target_user"]["followers_count"], 1)
+
+    def test_connection_lists_return_real_follow_relations(self):
+        User = get_user_model()
+        follower = User.objects.create_user(username="real_follower", password="FollowPass2026!")
+        UserFollow.objects.create(follower=self.user, following=self.target)
+        UserFollow.objects.create(follower=follower, following=self.user)
+
+        followers_response = self.client.get("/api/auth/connections/?type=followers")
+        following_response = self.client.get("/api/auth/connections/?type=following")
+
+        self.assertEqual(followers_response.status_code, 200)
+        self.assertEqual(followers_response.json()["count"], 1)
+        self.assertEqual(followers_response.json()["users"][0]["username"], "real_follower")
+        self.assertEqual(following_response.status_code, 200)
+        self.assertEqual(following_response.json()["count"], 1)
+        self.assertEqual(following_response.json()["users"][0]["username"], self.target.username)
+
+    def test_connection_lists_require_login(self):
+        self.client.logout()
+
+        response = self.client.get("/api/auth/connections/?type=followers")
+
+        self.assertEqual(response.status_code, 401)
 
     def test_regular_user_cannot_delete_post(self):
         response = self.client.post(f"/api/posts/{self.post.id}/delete/", data="{}", content_type="application/json")
