@@ -420,6 +420,8 @@ def article_payload(article, saved_ids=None, liked_ids=None):
         "is_liked": bool(liked_ids is not None and article.id in liked_ids),
         "featured": article.featured,
         "is_pinned": article.is_pinned,
+        "state": article.state,
+        "trashed_at": article.trashed_at.isoformat() if article.trashed_at else "",
         "blocks": [article_block_payload(block) for block in blocks],
     }
 
@@ -1069,7 +1071,8 @@ def send_private_message(request, user_id):
     return with_cors(JsonResponse({"message": message_payload(message)}, json_dumps_params={"ensure_ascii": False}), request)
 
 
-def normalize_article_blocks(raw_blocks, files):
+def normalize_article_blocks(raw_blocks, files, existing_images=None):
+    existing_images = existing_images or {}
     if isinstance(raw_blocks, str):
         try:
             raw_blocks = json.loads(raw_blocks)
@@ -1095,6 +1098,7 @@ def normalize_article_blocks(raw_blocks, files):
             raise ValueError("单张图片说明不能超过 200 个字符")
 
         upload = None
+        existing_image = ""
         if block_type == "image":
             image_count += 1
             if image_count > 20:
@@ -1102,10 +1106,13 @@ def normalize_article_blocks(raw_blocks, files):
             image_key = str(raw_block.get("image_key") or "")
             upload = files.get(image_key)
             if not upload:
-                raise ValueError("正文图片未成功选择，请重新添加")
-            image_error = validate_uploaded_image(upload, label="正文图片", max_size_mb=10)
-            if image_error:
-                raise ValueError(image_error)
+                existing_image = existing_images.get(str(raw_block.get("existing_id") or ""), "")
+                if not existing_image:
+                    raise ValueError("正文图片未成功选择，请重新添加")
+            else:
+                image_error = validate_uploaded_image(upload, label="正文图片", max_size_mb=10)
+                if image_error:
+                    raise ValueError(image_error)
         else:
             if not text:
                 continue
@@ -1115,7 +1122,13 @@ def normalize_article_blocks(raw_blocks, files):
                 raise ValueError(f"{label}内容过长")
             text_length += len(text)
 
-        blocks.append({"type": block_type, "text": text, "caption": caption, "upload": upload})
+        blocks.append({
+            "type": block_type,
+            "text": text,
+            "caption": caption,
+            "upload": upload,
+            "existing_image": existing_image,
+        })
 
     if not blocks or text_length == 0:
         raise ValueError("文章至少需要一段文字内容")
@@ -1128,6 +1141,17 @@ def article_payload_for_viewer(article, user):
     saved_ids = {article.id} if user.is_authenticated and ArticleSave.objects.filter(user=user, article=article).exists() else set()
     liked_ids = {article.id} if user.is_authenticated and ArticleLike.objects.filter(user=user, article=article).exists() else set()
     return article_payload(article, saved_ids, liked_ids)
+
+
+def can_manage_article(user, article):
+    return bool(
+        user.is_authenticated
+        and (user.is_staff or user.is_superuser or article.owner_id == user.id)
+    )
+
+
+def truthy_form_value(value):
+    return str(value or "").lower() in {"1", "true", "yes", "on"}
 
 
 @csrf_exempt
@@ -1205,6 +1229,7 @@ def create_article(request):
             owner=request.user,
             author=profile_for(request.user).nickname or request.user.first_name or request.user.username,
             car=car,
+            is_pinned=truthy_form_value(data.get("is_pinned")) if (request.user.is_staff or request.user.is_superuser) else False,
             state=PublishState.PUBLISHED,
         )
         for position, block in enumerate(blocks):
@@ -1213,11 +1238,129 @@ def create_article(request):
                 block_type=block["type"],
                 position=position,
                 text=block["text"],
-                image_upload=block["upload"],
+                image_upload=block["upload"] or block["existing_image"],
                 caption=block["caption"],
             )
 
     record_active_action(request.user)
+    article = Article.objects.select_related("car", "owner", "owner__profile").prefetch_related("blocks").get(id=article.id)
+    return with_cors(JsonResponse({"article": article_payload_for_viewer(article, request.user)}, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def update_article(request, article_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再编辑文章"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    try:
+        article = Article.objects.select_related("owner", "car").prefetch_related("blocks").get(id=article_id)
+    except Article.DoesNotExist:
+        return with_cors(JsonResponse({"error": "文章不存在"}, status=404), request)
+    if not can_manage_article(request.user, article):
+        return with_cors(JsonResponse({"error": "无权编辑这篇文章"}, status=403), request)
+    if article.trashed_at:
+        return with_cors(JsonResponse({"error": "请先从回收站恢复文章再编辑"}, status=400), request)
+
+    data = request.POST if request.content_type and request.content_type.startswith("multipart/form-data") else None
+    if data is None:
+        try:
+            data = read_json(request)
+        except json.JSONDecodeError:
+            return with_cors(JsonResponse({"error": "请求格式不正确"}, status=400), request)
+
+    title = (data.get("title") or "").strip()
+    summary = (data.get("summary") or "").strip()
+    category = (data.get("category") or "车主故事").strip()
+    car_value = (data.get("car") or "").strip()
+    cover_caption = (data.get("image_caption") or "").strip()
+    remove_cover = truthy_form_value(data.get("remove_cover"))
+    if not title:
+        return with_cors(JsonResponse({"error": "请输入文章标题"}, status=400), request)
+    if len(title) > 180:
+        return with_cors(JsonResponse({"error": "文章标题不能超过 180 个字符"}, status=400), request)
+    if len(summary) > 500:
+        return with_cors(JsonResponse({"error": "文章摘要不能超过 500 个字符"}, status=400), request)
+    if len(cover_caption) > 200:
+        return with_cors(JsonResponse({"error": "封面说明不能超过 200 个字符"}, status=400), request)
+    if category not in {choice[0] for choice in Article.CATEGORY_CHOICES}:
+        return with_cors(JsonResponse({"error": "文章栏目不正确"}, status=400), request)
+
+    cover_image = request.FILES.get("cover_image")
+    if cover_image:
+        image_error = validate_uploaded_image(cover_image, label="文章封面", max_size_mb=10)
+        if image_error:
+            return with_cors(JsonResponse({"error": image_error}, status=400), request)
+    has_existing_cover = bool(article.image_upload or article.image) and not remove_cover
+    if cover_caption and not (cover_image or has_existing_cover):
+        return with_cors(JsonResponse({"error": "添加封面后才能填写封面说明"}, status=400), request)
+
+    existing_blocks = list(article.blocks.all())
+    existing_images = {
+        str(block.id): block.image_upload.name
+        for block in existing_blocks
+        if block.block_type == "image" and block.image_upload
+    }
+    try:
+        blocks = normalize_article_blocks(data.get("blocks"), request.FILES, existing_images)
+    except ValueError as error:
+        return with_cors(JsonResponse({"error": str(error)}, status=400), request)
+
+    body_parts = []
+    for block in blocks:
+        if block["type"] == "heading":
+            body_parts.append(f"## {block['text']}")
+        elif block["type"] == "paragraph":
+            body_parts.append(block["text"])
+    body = "\n\n".join(body_parts)
+    if not summary:
+        summary = next((block["text"][:240] for block in blocks if block["type"] == "paragraph"), "")
+    car = None
+    if car_value:
+        car = Car.objects.filter(name=car_value).first() or Car.objects.filter(slug=car_value).first()
+
+    old_cover_name = article.image_upload.name if article.image_upload else ""
+    old_block_names = set(existing_images.values())
+    retained_block_names = {block["existing_image"] for block in blocks if block["existing_image"]}
+    with transaction.atomic():
+        article.title = title
+        article.summary = summary
+        article.category = category
+        article.body = body
+        article.image_caption = cover_caption
+        article.car = car
+        if request.user.is_staff or request.user.is_superuser:
+            article.is_pinned = truthy_form_value(data.get("is_pinned"))
+        if cover_image:
+            article.image_upload = cover_image
+            article.image = ""
+        elif remove_cover:
+            article.image_upload = ""
+            article.image = ""
+            article.image_caption = ""
+        article.save()
+
+        article.blocks.all().delete()
+        for position, block in enumerate(blocks):
+            ArticleBlock.objects.create(
+                article=article,
+                block_type=block["type"],
+                position=position,
+                text=block["text"],
+                image_upload=block["upload"] or block["existing_image"],
+                caption=block["caption"],
+            )
+
+    block_storage = ArticleBlock._meta.get_field("image_upload").storage
+    for image_name in old_block_names - retained_block_names:
+        block_storage.delete(image_name)
+    if old_cover_name and (cover_image or remove_cover):
+        Article._meta.get_field("image_upload").storage.delete(old_cover_name)
+
     article = Article.objects.select_related("car", "owner", "owner__profile").prefetch_related("blocks").get(id=article.id)
     return with_cors(JsonResponse({"article": article_payload_for_viewer(article, request.user)}, json_dumps_params={"ensure_ascii": False}), request)
 
@@ -1335,13 +1478,94 @@ def delete_article(request, article_id):
     blocked = ensure_active_user(request)
     if blocked:
         return blocked
-    if not (request.user.is_staff or request.user.is_superuser):
-        return with_cors(JsonResponse({"error": "只有管理员可以删除文章"}, status=403), request)
     try:
         article = Article.objects.get(id=article_id)
     except Article.DoesNotExist:
         return with_cors(JsonResponse({"error": "文章不存在"}, status=404), request)
-    article.delete()
+    if not can_manage_article(request.user, article):
+        return with_cors(JsonResponse({"error": "无权删除这篇文章"}, status=403), request)
+    if not article.trashed_at:
+        article.trashed_at = timezone.now()
+        article.state = PublishState.HIDDEN
+        article.save(update_fields=["trashed_at", "state", "updated_at"])
+    return with_cors(JsonResponse({
+        "ok": True,
+        "id": article_id,
+        "trashed_at": article.trashed_at.isoformat(),
+    }), request)
+
+
+@csrf_exempt
+@require_http_methods(["GET", "OPTIONS"])
+def article_trash(request):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录再查看回收站"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+
+    queryset = Article.objects.filter(trashed_at__isnull=False)
+    if not (request.user.is_staff or request.user.is_superuser):
+        queryset = queryset.filter(owner=request.user)
+    queryset = queryset.select_related("car", "owner", "owner__profile").prefetch_related("blocks").order_by("-trashed_at")[:200]
+    return with_cors(JsonResponse({
+        "articles": [article_payload_for_viewer(article, request.user) for article in queryset],
+    }, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "OPTIONS"])
+def restore_article(request, article_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    try:
+        article = Article.objects.select_related("owner", "car").prefetch_related("blocks").get(id=article_id, trashed_at__isnull=False)
+    except Article.DoesNotExist:
+        return with_cors(JsonResponse({"error": "回收站中没有这篇文章"}, status=404), request)
+    if not can_manage_article(request.user, article):
+        return with_cors(JsonResponse({"error": "无权恢复这篇文章"}, status=403), request)
+
+    article.trashed_at = None
+    article.state = PublishState.PUBLISHED
+    article.save(update_fields=["trashed_at", "state", "updated_at"])
+    return with_cors(JsonResponse({
+        "article": article_payload_for_viewer(article, request.user),
+    }, json_dumps_params={"ensure_ascii": False}), request)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "DELETE", "OPTIONS"])
+def permanently_delete_article(request, article_id):
+    if request.method == "OPTIONS":
+        return options_response(request)
+    if not request.user.is_authenticated:
+        return with_cors(JsonResponse({"error": "请先登录"}, status=401), request)
+    blocked = ensure_active_user(request)
+    if blocked:
+        return blocked
+    try:
+        article = Article.objects.prefetch_related("blocks").get(id=article_id, trashed_at__isnull=False)
+    except Article.DoesNotExist:
+        return with_cors(JsonResponse({"error": "回收站中没有这篇文章"}, status=404), request)
+    if not can_manage_article(request.user, article):
+        return with_cors(JsonResponse({"error": "无权永久删除这篇文章"}, status=403), request)
+
+    cover_name = article.image_upload.name if article.image_upload else ""
+    block_names = [block.image_upload.name for block in article.blocks.all() if block.image_upload]
+    with transaction.atomic():
+        article.delete()
+    if cover_name:
+        Article._meta.get_field("image_upload").storage.delete(cover_name)
+    block_storage = ArticleBlock._meta.get_field("image_upload").storage
+    for image_name in block_names:
+        block_storage.delete(image_name)
     return with_cors(JsonResponse({"ok": True, "id": article_id}), request)
 
 

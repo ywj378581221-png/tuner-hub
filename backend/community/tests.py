@@ -829,6 +829,105 @@ class ArticleInteractionTests(TestCase):
         self.assertEqual(ArticleComment.objects.get().body, "这篇长期案例很有参考价值。")
 
 
+class ArticleManagementTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.owner = User.objects.create_user(username="article_manager", password="ArticlePass2026!")
+        self.other = User.objects.create_user(username="other_editor", password="ArticlePass2026!")
+        self.article = Article.objects.create(
+            owner=self.owner,
+            author="article_manager",
+            title="Original article",
+            slug="original-managed-article",
+            summary="Original summary",
+            body="Original body",
+        )
+        self.paragraph = ArticleBlock.objects.create(
+            article=self.article,
+            block_type="paragraph",
+            position=0,
+            text="Original body",
+        )
+        self.image = ArticleBlock.objects.create(
+            article=self.article,
+            block_type="image",
+            position=1,
+            image_upload="article_blocks/existing.jpg",
+            caption="Existing image",
+        )
+        self.client.force_login(self.owner)
+
+    def test_owner_can_edit_article_and_keep_existing_image(self):
+        response = self.client.post(
+            f"/api/articles/{self.article.id}/update/",
+            {
+                "title": "Updated article",
+                "summary": "Updated summary",
+                "category": "长期用车",
+                "car": "",
+                "image_caption": "",
+                "blocks": json.dumps([
+                    {"type": "heading", "text": "Updated heading"},
+                    {"type": "paragraph", "text": "Updated body"},
+                    {"type": "image", "existing_id": self.image.id, "caption": "Updated caption"},
+                ]),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.article.refresh_from_db()
+        self.assertEqual(self.article.title, "Updated article")
+        self.assertEqual(self.article.body, "## Updated heading\n\nUpdated body")
+        self.assertEqual(self.article.blocks.count(), 3)
+        updated_image = self.article.blocks.get(block_type="image")
+        self.assertEqual(updated_image.image_upload.name, "article_blocks/existing.jpg")
+        self.assertEqual(updated_image.caption, "Updated caption")
+
+    def test_article_moves_to_trash_and_can_be_restored(self):
+        delete_response = self.client.post(f"/api/articles/{self.article.id}/delete/", data="{}", content_type="application/json")
+
+        self.article.refresh_from_db()
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertIsNotNone(self.article.trashed_at)
+        self.assertEqual(self.article.state, "hidden")
+        self.assertEqual(self.client.get(f"/api/articles/{self.article.id}/").status_code, 404)
+
+        trash_response = self.client.get("/api/articles/trash/")
+        self.assertEqual(trash_response.status_code, 200)
+        self.assertEqual(trash_response.json()["articles"][0]["id"], self.article.id)
+
+        restore_response = self.client.post(f"/api/articles/{self.article.id}/restore/", data="{}", content_type="application/json")
+        self.article.refresh_from_db()
+        self.assertEqual(restore_response.status_code, 200)
+        self.assertIsNone(self.article.trashed_at)
+        self.assertEqual(self.article.state, "published")
+
+    def test_trashed_article_can_be_permanently_deleted(self):
+        self.client.post(f"/api/articles/{self.article.id}/delete/", data="{}", content_type="application/json")
+
+        response = self.client.post(
+            f"/api/articles/{self.article.id}/permanent-delete/",
+            data="{}",
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Article.objects.filter(id=self.article.id).exists())
+
+    def test_other_user_cannot_edit_or_trash_article(self):
+        self.client.force_login(self.other)
+        blocks = json.dumps([{"type": "paragraph", "text": "Unauthorized edit"}])
+
+        update_response = self.client.post(
+            f"/api/articles/{self.article.id}/update/",
+            {"title": "Unauthorized", "category": "长期用车", "blocks": blocks},
+        )
+        delete_response = self.client.post(f"/api/articles/{self.article.id}/delete/", data="{}", content_type="application/json")
+
+        self.assertEqual(update_response.status_code, 403)
+        self.assertEqual(delete_response.status_code, 403)
+
+
 class LegacyLongPostPromotionTests(TestCase):
     def test_structured_long_post_is_promoted_and_hidden_from_community(self):
         body = "# 21万公里的宝马 M2C\n\n" + ("长期用车真实记录。" * 140)

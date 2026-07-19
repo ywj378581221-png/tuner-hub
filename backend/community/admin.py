@@ -229,12 +229,12 @@ class ArticleBlockInline(admin.StackedInline):
 
 @admin.register(Article)
 class ArticleAdmin(ImageUploadAdminMixin, admin.ModelAdmin):
-    list_display = ("title", "category", "owner", "author", "car", "views", "likes", "comments", "is_pinned", "featured", "state", "created_at")
-    list_filter = ("category", "is_pinned", "featured", "state", "created_at")
+    list_display = ("title", "category", "owner", "author", "car", "views", "likes", "comments", "is_pinned", "featured", "state", "trashed_at", "created_at")
+    list_filter = ("category", "is_pinned", "featured", "state", "trashed_at", "created_at")
     search_fields = ("title", "summary", "body", "author", "owner__username")
     list_editable = ("is_pinned", "featured", "state")
     prepopulated_fields = {"slug": ("title",)}
-    fields = ("title", "slug", "category", "summary", "body", "image_upload", "image_preview", "image_caption", "image", "owner", "author", "car", "views", "likes", "comments", "is_pinned", "featured", "state")
+    fields = ("title", "slug", "category", "summary", "body", "image_upload", "image_preview", "image_caption", "image", "owner", "author", "car", "views", "likes", "comments", "is_pinned", "featured", "state", "trashed_at")
     inlines = (ArticleBlockInline,)
 
 

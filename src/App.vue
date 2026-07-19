@@ -19,7 +19,9 @@ import {
   PhMagnifyingGlass as MagnifyingGlass,
   PhMapPin as MapPin,
   PhPaperPlaneTilt as PaperPlaneTilt,
+  PhPencilSimple as PencilSimple,
   PhPlus as Plus,
+  PhArrowCounterClockwise as RestoreIcon,
   PhSlidersHorizontal as SlidersHorizontal,
   PhSparkle as Sparkle,
   PhStar as Star,
@@ -56,6 +58,7 @@ const quickLinks = [
   ["我的车库", "/garage"],
   ["项目车记录", "/projects"],
   ["收藏内容", "/saved"],
+  ["文章回收站", "/articles/trash"],
   ["活动日历", "/events"],
 ];
 
@@ -139,6 +142,8 @@ const shops = ref([]);
 const market = ref([]);
 const topicCards = ref([]);
 const articles = ref([]);
+const trashedArticles = ref([]);
+const trashLoading = ref(false);
 const garageVehicles = ref([]);
 const projectRecords = ref([]);
 const route = useRoute();
@@ -197,7 +202,9 @@ const articleBulkImageInput = ref(null);
 const selectedArticleBlockIndex = ref(0);
 const articleCoverFile = ref(null);
 const articleCoverPreview = ref("");
-const articleDraft = ref({ title: "", summary: "", category: "长期用车", car: "", image_caption: "" });
+const articleCoverRemoved = ref(false);
+const editingArticleId = ref(null);
+const articleDraft = ref({ title: "", summary: "", category: "长期用车", car: "", image_caption: "", is_pinned: false });
 let articleBlockSequence = 1;
 const articleDraftBlocks = ref([{ key: articleBlockSequence, type: "paragraph", text: "", caption: "", file: null, preview: "" }]);
 const showSpecsPanel = ref(false);
@@ -227,8 +234,10 @@ const unreadMessages = computed(() => inboxMessages.value.filter((message) => me
 
 const isFunctionalListPage = computed(() => [
   "/garage", "/projects", "/profile", "/saved", "/notifications", "/search", "/topics", "/events", "/clubs", "/shops",
-  "/terms", "/privacy", "/community-rules", "/contact",
+  "/terms", "/privacy", "/community-rules", "/contact", "/articles/trash",
 ].includes(route.path) || route.path.startsWith("/messages") || route.path.startsWith("/profile/"));
+
+const isEditingArticle = computed(() => Boolean(editingArticleId.value));
 
 const connectionType = computed(() => {
   if (route.path === "/profile/followers") return "followers";
@@ -514,6 +523,7 @@ const routeDetail = computed(() => {
     "/profile": ["个人中心", "管理账号资料、头像、车库、收藏和发布内容。"],
     "/profile/followers": ["我的粉丝", "查看当前账号真实的粉丝列表。"],
     "/profile/following": ["我的关注", "查看当前账号正在关注的车友。"],
+    "/articles/trash": ["文章回收站", "恢复误删文章，或永久删除不再需要的内容。"],
     "/admin-guide": ["内容管理说明", "管理员可以维护社区内容，普通用户看到的都是已发布内容。"],
     "/terms": ["用户协议", "使用 Tuner Hub 前请了解账号、内容和社区管理规则。"],
     "/privacy": ["隐私政策", "了解账号信息、用户内容和安全记录的使用方式。"],
@@ -730,6 +740,23 @@ async function loadConnections(type = connectionType.value) {
   }
 }
 
+async function loadArticleTrash() {
+  if (!currentUser.value || route.path !== "/articles/trash") {
+    trashedArticles.value = [];
+    return;
+  }
+  trashLoading.value = true;
+  try {
+    const data = await apiFetch("/api/articles/trash/");
+    trashedArticles.value = normalizeArticles(data.articles || []);
+  } catch (error) {
+    trashedArticles.value = [];
+    showToast(error.message);
+  } finally {
+    trashLoading.value = false;
+  }
+}
+
 onMounted(async () => {
   if (route.path.startsWith("/reset-password/")) {
     resetForm.value.uid = String(route.params.uid || "");
@@ -740,6 +767,7 @@ onMounted(async () => {
   await loadSiteData();
   await loadMessages();
   await loadConnections();
+  await loadArticleTrash();
   if (route.path === "/create" || route.path.startsWith("/create/")) {
     composerMode.value = route.path === "/create/article" ? "article" : "post";
     showComposer.value = true;
@@ -763,6 +791,7 @@ watch(() => routeArticle.value?.id, (articleId) => {
 
 watch(() => route.path, () => {
   if (connectionType.value) loadConnections();
+  if (route.path === "/articles/trash") loadArticleTrash();
 });
 
 function switchPage(index) {
@@ -815,10 +844,50 @@ function openPostComposerForType(type) {
 }
 
 function openArticleComposer(car = null) {
+  resetArticleDraft();
   composerMode.value = "article";
   articleDraft.value.car = car?.name || "";
   goTo("/create/article");
   showComposer.value = true;
+}
+
+function canManageArticle(article) {
+  return Boolean(
+    currentUser.value
+    && article
+    && (currentUser.value.is_staff || currentUser.value.is_superuser || article.owner_id === currentUser.value.id)
+  );
+}
+
+function openArticleEditor(article) {
+  if (!canManageArticle(article)) return;
+  resetArticleDraft();
+  editingArticleId.value = article.id;
+  composerMode.value = "article";
+  articleDraft.value = {
+    title: article.title || "",
+    summary: article.summary || "",
+    category: article.category || "长期用车",
+    car: article.car || "",
+    image_caption: article.image_caption || "",
+    is_pinned: Boolean(article.is_pinned),
+  };
+  articleCoverPreview.value = article.has_cover ? article.image || "" : "";
+  articleCoverRemoved.value = false;
+  articleDraftBlocks.value = (article.blocks?.length ? article.blocks : [{ type: "paragraph", text: article.body || "" }]).map((block) => ({
+    ...articleBlock(block.type || "paragraph"),
+    text: block.text || "",
+    caption: block.caption || "",
+    existing_id: block.id || null,
+    preview: block.image || "",
+  }));
+  selectedArticleBlockIndex.value = 0;
+  showComposer.value = true;
+}
+
+function closeComposer() {
+  showComposer.value = false;
+  if (isEditingArticle.value) resetArticleDraft();
 }
 
 async function openComposerForCar(car, path = "/create") {
@@ -951,12 +1020,14 @@ function handleArticleCover(event) {
   if (!file || !validComposerImage(file, "文章封面")) return;
   articleCoverFile.value = file;
   articleCoverPreview.value = URL.createObjectURL(file);
+  articleCoverRemoved.value = false;
 }
 
 function clearArticleCover() {
   if (articleCoverPreview.value.startsWith("blob:")) URL.revokeObjectURL(articleCoverPreview.value);
   articleCoverFile.value = null;
   articleCoverPreview.value = "";
+  articleCoverRemoved.value = Boolean(editingArticleId.value);
   articleDraft.value.image_caption = "";
   if (articleCoverInput.value) articleCoverInput.value.value = "";
 }
@@ -1006,11 +1077,16 @@ function handleArticleBulkImages(event) {
 }
 
 function resetArticleDraft() {
-  clearArticleCover();
+  if (articleCoverPreview.value.startsWith("blob:")) URL.revokeObjectURL(articleCoverPreview.value);
   articleDraftBlocks.value.forEach((block) => {
     if (block.preview?.startsWith("blob:")) URL.revokeObjectURL(block.preview);
   });
-  articleDraft.value = { title: "", summary: "", category: "长期用车", car: "", image_caption: "" };
+  articleCoverFile.value = null;
+  articleCoverPreview.value = "";
+  articleCoverRemoved.value = false;
+  editingArticleId.value = null;
+  if (articleCoverInput.value) articleCoverInput.value.value = "";
+  articleDraft.value = { title: "", summary: "", category: "长期用车", car: "", image_caption: "", is_pinned: false };
   articleDraftBlocks.value = [articleBlock("paragraph")];
   selectedArticleBlockIndex.value = 0;
 }
@@ -1407,13 +1483,39 @@ async function deleteCommunityPost(post) {
 }
 
 async function deleteCommunityArticle(article) {
-  if (!article || !canManageCommunity()) return;
-  if (!window.confirm(`确定删除文章“${article.title}”吗？此操作无法撤销。`)) return;
+  if (!article || !canManageArticle(article)) return;
+  if (!window.confirm(`确定将文章“${article.title}”移入回收站吗？之后可以恢复。`)) return;
   try {
     await apiFetch(`/api/articles/${article.id}/delete/`, { method: "POST", body: "{}" });
     articles.value = articles.value.filter((item) => item.id !== article.id);
-    showToast("文章已删除");
-    if (route.path === `/articles/${article.id}`) goTo("/");
+    showToast("文章已移入回收站");
+    if (route.path === `/articles/${article.id}`) goTo("/articles/trash");
+    await loadArticleTrash();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function restoreTrashedArticle(article) {
+  if (!article) return;
+  try {
+    const data = await apiFetch(`/api/articles/${article.id}/restore/`, { method: "POST", body: "{}" });
+    const restored = normalizeArticles([data.article])[0];
+    trashedArticles.value = trashedArticles.value.filter((item) => item.id !== article.id);
+    articles.value = [restored, ...articles.value.filter((item) => item.id !== restored.id)];
+    showToast("文章已恢复");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function permanentlyDeleteArticle(article) {
+  if (!article) return;
+  if (!window.confirm(`永久删除文章“${article.title}”吗？删除后无法恢复。`)) return;
+  try {
+    await apiFetch(`/api/articles/${article.id}/permanent-delete/`, { method: "POST", body: "{}" });
+    trashedArticles.value = trashedArticles.value.filter((item) => item.id !== article.id);
+    showToast("文章已永久删除");
   } catch (error) {
     showToast(error.message);
   }
@@ -1552,12 +1654,15 @@ async function publishArticle() {
 
   publishingArticle.value = true;
   try {
+    const editingId = editingArticleId.value;
     const formData = new FormData();
     formData.append("title", articleDraft.value.title.trim());
     formData.append("summary", articleDraft.value.summary.trim());
     formData.append("category", articleDraft.value.category);
     formData.append("car", articleDraft.value.car);
     formData.append("image_caption", articleDraft.value.image_caption.trim());
+    formData.append("is_pinned", articleDraft.value.is_pinned ? "true" : "false");
+    formData.append("remove_cover", articleCoverRemoved.value ? "true" : "false");
     if (articleCoverFile.value) formData.append("cover_image", articleCoverFile.value);
 
     const blocks = articleDraftBlocks.value.map((block, index) => {
@@ -1565,21 +1670,30 @@ async function publishArticle() {
       if (block.type === "image" && block.file) {
         payload.image_key = `block_image_${index}`;
         formData.append(payload.image_key, block.file);
+      } else if (block.type === "image" && block.existing_id) {
+        payload.existing_id = block.existing_id;
       }
       return payload;
     });
     formData.append("blocks", JSON.stringify(blocks));
 
-    const data = await apiFetch("/api/articles/create/", { method: "POST", body: formData });
+    const endpoint = editingId ? `/api/articles/${editingId}/update/` : "/api/articles/create/";
+    const data = await apiFetch(endpoint, { method: "POST", body: formData });
     const article = normalizeArticles([data.article])[0];
-    articles.value = [
-      ...articles.value.filter((item) => item.is_pinned),
-      article,
-      ...articles.value.filter((item) => !item.is_pinned),
-    ];
+    if (editingId) {
+      articles.value = articles.value
+        .map((item) => item.id === article.id ? article : item)
+        .sort((left, right) => Number(right.is_pinned) - Number(left.is_pinned));
+    } else {
+      articles.value = [
+        ...articles.value.filter((item) => item.is_pinned),
+        article,
+        ...articles.value.filter((item) => !item.is_pinned),
+      ];
+    }
     showComposer.value = false;
     resetArticleDraft();
-    showToast("文章已发布并显示在首页");
+    showToast(editingId ? "文章修改已保存" : "文章已发布并显示在首页");
     goTo(`/articles/${article.id}`);
   } catch (error) {
     showToast(error.message);
@@ -1857,6 +1971,22 @@ async function publishArticle() {
               <p v-else-if="!currentUser" class="empty-note">登录后查看关注关系。</p>
               <p v-else-if="!connectionUsers.length" class="empty-note">{{ connectionType === 'followers' ? '暂时还没有粉丝。' : '暂时还没有关注其他车友。' }}</p>
             </section>
+            <section v-if="route.path === '/articles/trash'" class="data-panel article-trash-list">
+              <div class="module-head"><h2>文章回收站</h2><span>{{ trashedArticles.length }} 篇</span></div>
+              <article v-for="article in trashedArticles" :key="article.id" class="trash-article-row">
+                <div>
+                  <strong>{{ article.title }}</strong>
+                  <span>{{ article.category }} · {{ article.author }} · {{ article.car || '综合内容' }}</span>
+                </div>
+                <div class="trash-actions">
+                  <button @click="restoreTrashedArticle(article)"><RestoreIcon :size="17" />恢复</button>
+                  <button class="danger-button" @click="permanentlyDeleteArticle(article)"><Trash :size="17" />永久删除</button>
+                </div>
+              </article>
+              <p v-if="trashLoading" class="empty-note">正在加载...</p>
+              <p v-else-if="!currentUser" class="empty-note">登录后查看文章回收站。</p>
+              <p v-else-if="!trashedArticles.length" class="empty-note">回收站是空的。</p>
+            </section>
             <section v-if="route.path === '/saved'" class="data-panel">
               <div class="module-head"><h2>收藏内容</h2><span>{{ savedPosts.length + savedArticles.length }} 条</span></div>
               <button v-for="article in savedArticles" :key="`saved-article-${article.id}`" class="topic-row" @click="goTo(`/articles/${article.id}`)">
@@ -1928,7 +2058,10 @@ async function publishArticle() {
                     <span>{{ routeArticle.category }}文章</span>
                     <b v-if="routeArticle.is_pinned" class="pin-badge">置顶</b>
                   </div>
-                  <button v-if="canManageCommunity()" class="danger-button article-delete-button" @click="deleteCommunityArticle(routeArticle)"><Trash :size="16" />删除文章</button>
+                  <div v-if="canManageArticle(routeArticle)" class="article-management-actions">
+                    <button class="article-edit-button" @click="openArticleEditor(routeArticle)"><PencilSimple :size="16" />编辑文章</button>
+                    <button class="danger-button article-delete-button" @click="deleteCommunityArticle(routeArticle)"><Trash :size="16" />移入回收站</button>
+                  </div>
                 </div>
                 <div class="article-author-line">
                   <img :src="routeArticle.author_avatar || defaultAvatar" :alt="routeArticle.author" />
@@ -2378,13 +2511,13 @@ async function publishArticle() {
     </footer>
 
     <div v-if="showComposer" class="modal-wrap">
-      <button class="scrim" @click="showComposer = false"></button>
+      <button class="scrim" @click="closeComposer"></button>
       <section class="composer-modal" :class="{ 'article-composer-modal': composerMode === 'article' }" role="dialog" aria-modal="true" aria-labelledby="composer-title">
         <div class="modal-head">
-          <h2 id="composer-title">发布内容</h2>
-          <button class="icon-button" aria-label="关闭发布窗口" @click="showComposer = false"><X :size="20" /></button>
+          <h2 id="composer-title">{{ isEditingArticle ? '编辑文章' : '发布内容' }}</h2>
+          <button class="icon-button" aria-label="关闭发布窗口" @click="closeComposer"><X :size="20" /></button>
         </div>
-        <div class="composer-mode-tabs">
+        <div v-if="!isEditingArticle" class="composer-mode-tabs">
           <button :class="{ active: composerMode === 'post' }" @click="composerMode = 'post'">发布动态</button>
           <button :class="{ active: composerMode === 'article' }" @click="composerMode = 'article'">发布文章</button>
         </div>
@@ -2445,6 +2578,10 @@ async function publishArticle() {
             <option value="">选择关联车型（可选）</option>
             <option v-for="car in enrichedCars" :key="car.name" :value="car.name">{{ car.name }}</option>
           </select>
+          <label v-if="canManageCommunity()" class="article-publish-option">
+            <input v-model="articleDraft.is_pinned" type="checkbox" />
+            <span>置顶文章</span>
+          </label>
 
           <section class="article-cover-editor">
             <div class="composer-extra-head"><strong>文章封面</strong></div>
@@ -2484,7 +2621,7 @@ async function publishArticle() {
               <button @click="chooseArticleImagesAfter(selectedArticleBlockIndex)"><ImageIcon :size="17" />插入图片</button>
             </div>
           </section>
-          <button class="post-button" :disabled="publishingArticle" @click="publishArticle"><PaperPlaneTilt :size="18" />{{ publishingArticle ? '发布中' : '发布文章' }}</button>
+          <button class="post-button" :disabled="publishingArticle" @click="publishArticle"><PaperPlaneTilt :size="18" />{{ publishingArticle ? '保存中' : isEditingArticle ? '保存修改' : '发布文章' }}</button>
         </template>
       </section>
     </div>

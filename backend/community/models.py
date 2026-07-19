@@ -368,6 +368,7 @@ class Article(TimeStampedModel):
     is_pinned = models.BooleanField("置顶", default=False)
     featured = models.BooleanField("首页推荐", default=False)
     state = models.CharField("发布状态", max_length=20, choices=PublishState.choices, default=PublishState.PUBLISHED)
+    trashed_at = models.DateTimeField("移入回收站时间", null=True, blank=True)
 
     class Meta:
         verbose_name = "资讯文章"
